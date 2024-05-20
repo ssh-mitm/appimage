@@ -11,6 +11,10 @@ of an AppImage next to the AppRun.
 The provided AppRun bash script sets up the necessary environment and invokes the application
 using this module. It should be located at the root of the AppImage filesystem.
 
+Configuration:
+--------------
+
+
 Intended Usage:
 ---------------
 
@@ -21,23 +25,20 @@ determines the appropriate entry point, and initiates the application.
 
 import argparse
 import os
+import shutil
+import site
 import sys
-from configparser import ConfigParser
 from functools import cached_property
-from importlib.metadata import EntryPoint, entry_points
 from typing import TYPE_CHECKING, Dict, Optional
 from venv import EnvBuilder
 
-from appimage.utils import resources
+if sys.version_info >= (3, 11):
+    from importlib.metadata import EntryPoint, entry_points
+else:
+    from importlib_metadata import EntryPoint, entry_points
 
 if TYPE_CHECKING:
     from types import SimpleNamespace
-
-
-DEFAULT_CONFIG = """
-[appimage]
-entry_point =
-"""
 
 
 def patch_appimage_venv(context: "SimpleNamespace") -> None:
@@ -89,12 +90,8 @@ class AppStarter:
         Initializes the AppStarter instance by reading the default configuration
         and any existing 'appimage.ini' configuration file in the APPDIR.
         """
-        self.config = ConfigParser()
-        self.config.read_string(DEFAULT_CONFIG)
-        config_path = resources.files("sshmitm.data").joinpath("appimage.ini")
-        self.config.read_string(config_path.read_text(encoding="utf-8"))
-
-        self.default_ep = self.config.get("appimage", "entry_point", fallback=None)
+        self.appimage = os.path.abspath(os.environ.get("APPIMAGE"))
+        self.default_ep = os.environ.pop("PYTHON_ENTRY_POINT", None)
         argv0_complete = os.environ.get("ARGV0")
         self.argv0 = os.path.basename(argv0_complete) if argv0_complete else None
         self.env_ep = os.environ.get("APP_ENTRY_POINT")
@@ -161,7 +158,14 @@ class AppStarter:
 
         It passes any additional arguments provided in the command line to the interpreter.
         """
-        args = [sys.executable, "-P"]
+        if sys.executable == self.appimage:
+            sys.exit(
+                "Can not start interpreter!\n"
+                "The appimage module is not compatible with python-appimage because of unclean patches in encodings module!\n"
+                "Those patches changes the 'sys.executable' path for the whole python environment to point to the AppImage file.\n"
+                "Changing this path for all modules can result in an execution loop. Aborting interpreter execution!"
+            )
+        args = [sys.executable, "-P", "-I"]
         args.extend(sys.argv[1:])
         os.execvp(  # nosec # noqa: S606 # Starting a process without a shell
             sys.executable, args
@@ -230,6 +234,84 @@ class AppStarter:
         self.start_entry_point()
 
 
+def setup_virtualenv():
+
+    def find_link(path: str) -> str:
+        try:
+            link = os.readlink(path)
+            return find_link(link)
+        except OSError:  # if the last is not symbolic file will throw OSError
+            return path
+
+    appimage = os.path.abspath(os.environ.get("APPIMAGE"))
+    # Check if VIRTUAL_ENV is set and if the resolved python3 matches APPIMAGE
+    if "VIRTUAL_ENV" in os.environ:
+        resolved_python3 = os.path.abspath(
+            find_link(os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3"))
+        )
+        if resolved_python3 == appimage:
+            os.environ.pop("PYTHONNOUSERSITE", None)
+            os.environ["PYTHONUSERBASE"] = os.environ["VIRTUAL_ENV"]
+            os.environ["PATH"] = f"{os.environ['VIRTUAL_ENV']}/bin:{os.environ['PATH']}"
+            site.USER_BASE = os.environ["VIRTUAL_ENV"]
+            site.USER_SITE = os.path.join(
+                site.USER_BASE,
+                "lib",
+                f"python{sys.version_info[0]}.{sys.version_info[1]}",
+                "site-packages",
+            )
+            sys.path.insert(0, site.USER_SITE)
+            return
+
+    # Determine the command path
+    argv0 = os.environ.get("ARGV0", None)
+    if not argv0:
+        return
+    if "/" in argv0:
+        cmd_path = argv0
+    else:
+        cmd_path = shutil.which(argv0) or "AppRun"
+
+    # If environment not loaded and CMD_PATH is a symlink
+    if not os.path.islink(cmd_path):
+        return
+
+    symlink_path = os.path.abspath(cmd_path)
+    while os.path.islink(symlink_path):
+        venv_dir = os.path.dirname(os.path.dirname(symlink_path))
+        pyvenv_cfg = os.path.join(venv_dir, "pyvenv.cfg")
+        activate_script = os.path.join(venv_dir, "bin", "activate")
+        python_symlink = os.path.join(venv_dir, "bin", "python3")
+
+        # Check if the potential VENV_DIR is valid
+        if (
+            os.path.isfile(pyvenv_cfg)
+            and os.path.isfile(activate_script)
+            and os.path.islink(python_symlink)
+        ):
+            if (
+                os.path.abspath(find_link(os.path.join(venv_dir, "bin", "python3")))
+                == appimage
+            ):
+                # Execute the activation script
+                os.environ.pop("PYTHONNOUSERSITE", None)
+                os.environ["PYTHONUSERBASE"] = venv_dir
+                os.environ["PATH"] = f"{venv_dir}/bin:{os.environ['PATH']}"
+                site.USER_BASE = venv_dir
+                site.USER_SITE = os.path.join(
+                    site.USER_BASE,
+                    "lib",
+                    f"python{sys.version_info[0]}.{sys.version_info[1]}",
+                    "site-packages",
+                )
+                sys.path.insert(0, site.USER_SITE)
+                break
+
+        # Resolve one level of symlink without following further symlinks
+        resolved_link = os.readlink(symlink_path)
+        symlink_path = os.path.realpath(resolved_link)
+
+
 def start_entry_point() -> None:
     """
     Initiates the application start process by creating an instance of the AppStarter class
@@ -241,6 +323,7 @@ def start_entry_point() -> None:
     any issues that it cannot handle (such as configuration errors, missing entry points, etc.),
     it will raise an AppStartException.
     """
+    setup_virtualenv()
     if not os.environ.get("APPDIR"):
         sys.exit("This module must be started from an AppImage!")
     appstarter = AppStarter()
@@ -248,3 +331,7 @@ def start_entry_point() -> None:
         appstarter.start()
     except AppStartException as exc:
         sys.exit(str(exc))
+
+
+if __name__ == "__main__":
+    start_entry_point()
