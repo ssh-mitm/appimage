@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-requirements-txt"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
@@ -39,12 +39,8 @@ Tracker = "https://github.com/ssh-mitm/appimage/issues"
 [tool.hatch.version]
 path = "appimage/__init__.py"
 
-[tool.hatch.metadata.hooks.requirements_txt]
-files = ["requirements.in"]
-
 [tool.hatch.build]
 include = [
-    "requirements.in",
     "appimage/**/*.py",
 ]
 
@@ -57,6 +53,7 @@ dependencies = [
     "Flake8-pyproject",
     "mypy",
     "pylint",
+    "ruff",
 ]
 
 [tool.hatch.envs.lint.scripts]
@@ -65,6 +62,7 @@ check = [
     "black --check appimage",
     "flake8 appimage",
     "pylint appimage",
+    "ruff check appimage",
     "mypy appimage",
 ]
 
@@ -78,18 +76,7 @@ non_interactive = true
 
 [tool.pylint]
 disable = [
-    "duplicate-code",
     "line-too-long",
-    "missing-module-docstring",
-    "missing-class-docstring",
-    "missing-function-docstring",
-    "fixme",
-    "too-few-public-methods",
-    "too-many-branches",
-    "too-many-instance-attributes",
-    "too-many-statements",
-    "too-many-locals",
-    "too-many-return-statements"
 ]
 
 [tool.pylint.MASTER]
@@ -98,26 +85,16 @@ load-plugins = "pylint.extensions.docparams"
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "D",       # Docstring related
-    "E501",    # Line too long
-    "PLR0912", # Too many branches
-    "COM812",  # Trailing comma missing
-    "FA100",   # Missing from __future__ import annotations
-    "T201",    # `print` found
     "ANN101",  # Missing type annotation for `self` in method
-    "ANN102",  # Missing type annotation for `cls` in classmethod
-    "PTH118",  # `os.path.join()` should be replaced by `Path` with `/` operator
-    "PTH111",  # `os.path.expanduser()` should be replaced by `Path.expanduser()`
-    "PTH113",  # `os.path.isfile()` should be replaced by `Path.is_file()`
-    "PTH116",  # `os.stat()` should be replaced by `Path.stat()`, `Path.owner()`, or `Path.group()`
-    "PTH103",  # `os.makedirs()` should be replaced by `Path.mkdir(parents=True)`
-    "PTH123",  # `open()` should be replaced by `Path.open()`
+    "D203",    # one-blank-line-before-class
+    "D213",    # multi-line-summary-second-line
+    "E501",    # Line too long
+    "FA100",   # Missing from __future__ import annotations
+    "PTH100",  # `os.path.abspath()` should be replaced by `Path.resolve()`
     "PTH107",  # `os.remove()` should be replaced by `Path.unlink()`
+    "PTH113",  # `os.path.isfile()` should be replaced by `Path.is_file()`
+    "PTH114",  # `os.path.islink()` should be replaced by `Path.is_symlink()`
+    "PTH118",  # `os.path.join()` should be replaced by `Path` with `/` operator
     "PTH119",  # `os.path.basename()` should be replaced by `Path.name`
-    "PLR0913", # Too many arguments in function definition
-    "S104",    # Possible binding to all interfaces
-    "SLF001",  # Private member accessed: `_indent`
-    "PLR0911", # Too many return statements
-    "TRY400",  # Use `logging.exception` instead of `logging.error`
-    "UP024",   # Replace aliased errors with `OSError`
+    "PTH120",  # `os.path.dirname()` should be replaced by `Path.parent`
 ]
