@@ -1,1 +1,0 @@
-importlib_metadata>=4.13; python_version < "3.11"

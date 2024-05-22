@@ -2,25 +2,59 @@
 
 This module is designed to be invoked by the AppRun script of an AppImage and is not intended
 for direct execution. The module includes the AppStarter class, which orchestrates the application
-startup process based on configurations defined in a .ini file, controlling environment variables,
-interpreter access, entry point restrictions, and default commands.
-
-The .ini configuration file must be named 'appimage.ini' and located within the root firectory
-of an AppImage next to the AppRun.
+startup process based on command line arguments, controlling environment variables, interpreter
+access, entry point restrictions, and default commands.
 
 The provided AppRun bash script sets up the necessary environment and invokes the application
 using this module. It should be located at the root of the AppImage filesystem.
 
-Configuration:
---------------
+Command Line Usage:
+-------------------
 
+    ./<appimage> --python-help
+    ./<appimage> --python-interpreter
+    ./<appimage> --python-venv <PYTHON_VENV_DIR>
+    ./<appimage> --python-entry-point <PYTHON_ENTRY_POINT>
+
+Arguments:
+---------
+- **default_entry_point**: The entry point to start the application.
+- **--python-help**: Show help message and exit.
+- **--python-interpreter**: Start the Python interpreter.
+- **--python-venv <PYTHON_VENV_DIR>**: Create a virtual environment in the specified directory
+  (PYTHON_VENV_DIR) that points to the Python installation within the AppImage. This is helpful
+  for setting up an isolated environment where all Python packages from the AppImage are available.
+- **--python-entry-point <PYTHON_ENTRY_POINT>**: Execute a specified Python entry point from the
+  console scripts (e.g., "ssh-mitm" or "ssmitm.cli:main"). This allows you to run specific
+  commands or scripts packaged within the AppImage.
 
 Intended Usage:
 ---------------
 
 This module is used within an AppImage environment, with the AppRun entry point calling the
-`start_entry_point` function provided by this module. AppStarter reads the configurations,
+`start_entry_point` function provided by this module. AppStarter reads the command line arguments,
 determines the appropriate entry point, and initiates the application.
+
+Example AppRun Script:
+----------------------
+
+The AppRun script is a bash script located at the root of the AppImage filesystem. It sets up
+the necessary environment and calls the `appimage` module to start the application. Below is
+an example AppRun script:
+
+    #!/bin/bash
+
+    set -e
+
+    if [ -z $APPDIR ]; then
+        export APPDIR=$(dirname $(readlink -f "$0"))
+    fi
+
+    exec "$APPDIR/opt/python3.11/bin/python3.11" -m appimage ssh-mitm "$@"
+
+This script ensures that the APPDIR environment variable is set and then executes the Python
+interpreter within the AppImage, invoking the `appimage` module to start the application.
+
 """
 
 import argparse
@@ -29,34 +63,62 @@ import shutil
 import site
 import sys
 from functools import cached_property
+from importlib.metadata import EntryPoint, entry_points
 from typing import TYPE_CHECKING, Dict, List, Optional
 from venv import EnvBuilder
-
-if sys.version_info >= (3, 11):
-    from importlib.metadata import EntryPoint, entry_points
-else:
-    from importlib_metadata import EntryPoint, entry_points
 
 if TYPE_CHECKING:
     from types import SimpleNamespace
 
 
+def get_entry_points(group: str) -> List[EntryPoint]:
+    """Retrieve a list of entry points for a specified group.
+
+    This function fetches entry points from the current Python environment. It is compatible
+    with different Python versions, handling the retrieval process accordingly.
+
+    Attributes
+    ----------
+        group (str): The entry point group to filter and retrieve.
+
+    Returns
+    -------
+        List[EntryPoint]: A list of entry points belonging to the specified group.
+
+    """
+    eps = entry_points()
+    if sys.version_info >= (3, 10):
+        return list(eps.select(group=group))
+    return list(eps[group])
+
+
 def patch_appimage_venv(context: "SimpleNamespace") -> None:
+    """Patches the virtual environment within an AppImage.
+
+    This function modifies the virtual environment by replacing the Python symlink
+    with the AppImage path. It also creates symlinks for console script entry points
+    within the virtual environment's bin directory.
+
+    Attributes
+    ----------
+        context (SimpleNamespace): A namespace object containing the bin_path attribute
+                                   which specifies the path to the virtual environment's
+                                   bin directory.
+
+    """
     symlink_target = "python3"
     # if executed as AppImage override python symlink
     # this is not relevant for extracted AppImages
-    appimage_path = os.environ.get("APPIMAGE")
-    appdir = os.environ.get("APPDIR")
-    if not appimage_path or not appdir or sys.version_info < (3, 10):
-        sys.exit("venv command only supported by AppImages")
+    appimage_path = os.environ.get("APPIMAGE", None)
+    if not appimage_path:
+        return
 
     # replace symlink to appimage instead of python executable
     python_path = os.path.join(context.bin_path, symlink_target)
     os.remove(python_path)
     os.symlink(appimage_path, python_path)
 
-    eps = entry_points()
-    scripts = eps.select(group="console_scripts")  # type: ignore[attr-defined, unused-ignore] # ignore old python < 3.10
+    scripts = get_entry_points(group="console_scripts")
     for ep in scripts:
         ep_path = os.path.join(context.bin_path, ep.name)
         if os.path.isfile(ep_path):
@@ -65,34 +127,62 @@ def patch_appimage_venv(context: "SimpleNamespace") -> None:
 
 
 def setup_python_patched(self: EnvBuilder, context: "SimpleNamespace") -> None:
+    """Set up a Python environment with additional patching for AppImage virtual environments.
+
+    This function calls the original setup function and then applies additional patches
+    to integrate AppImage-specific modifications into the virtual environment.
+
+    Attributes
+    ----------
+        self (EnvBuilder): The environment builder instance.
+        context (SimpleNamespace): The context for the environment setup, containing configuration and state information.
+
+    """
     # call monkey patched function
     self.setup_python_original(context)  # type: ignore[attr-defined]
     patch_appimage_venv(context)
 
 
-class AppStartException(Exception):
+class AppStartExceptionError(Exception):
     """Base exception class for errors during the app start process."""
 
 
-class InvalidEntryPoint(AppStartException):
+class InvalidEntryPointError(AppStartExceptionError):
     """Exception raised for invalid entry point."""
 
 
 class AppStarter:
-    """
-    Class responsible for managing the application start process, including
-    reading the configuration, determining the correct entry point, and
-    executing the application.
+    """Class responsible for managing the application start process.
+
+    This class handles reading command-line arguments, determining the correct entry point,
+    and executing the application. It ensures that the application is initialized
+    properly based on the provided command-line arguments and entry points.
     """
 
     def __init__(self) -> None:
-        """
-        Initializes the AppStarter instance by reading the default configuration
-        and any existing 'appimage.ini' configuration file in the APPDIR.
+        """Initialize the AppStarter instance.
+
+        This method reads the default configuration and any existing 'appimage.ini' configuration
+        file in the APPDIR. It also initializes various attributes based on the current environment
+        variables.
+
+        Attributes
+        ----------
+            default_ep (Optional[str]): The default entry point, initially set to None.
+            subprocess_args (Optional[List[str]]): Arguments for subprocesses, initially set to None.
+            appimage (Optional[str]): The absolute path to the AppImage, if the APPIMAGE environment
+                                    variable is set.
+            argv0 (Optional[str]): The base name of the initial command used to invoke the script,
+                                if the ARGV0 environment variable is set.
+            env_ep (Optional[str]): The entry point specified in the environment variable APP_ENTRY_POINT.
+            virtual_env (Optional[str]): The path to the virtual environment, if the VIRTUAL_ENV
+                                        environment variable is set.
+
         """
         self.default_ep: Optional[str] = None
         self.subprocess_args: Optional[List[str]] = None
-        self.appimage = os.path.abspath(os.environ.get("APPIMAGE"))
+        appimage_env = os.environ.get("APPIMAGE", None)
+        self.appimage = os.path.abspath(appimage_env) if appimage_env else None
         argv0_complete = os.environ.get("ARGV0", None)
         self.argv0 = os.path.basename(argv0_complete) if argv0_complete else None
         self.env_ep = os.environ.get("APP_ENTRY_POINT")
@@ -100,22 +190,40 @@ class AppStarter:
 
     @cached_property
     def appdir(self) -> str:
-        """
-        Get the application directory from the 'APPDIR' environment variable.
+        """Get the application directory from the 'APPDIR' environment variable.
+
         If 'APPDIR' is not set in the environment, it defaults to the directory
         containing the current file (__file__).
 
-        Returns:
-            str: The path to the application directory.
+        Returns
+        -------
+            str: The application directory specified by 'APPDIR'.
+
+        Raises
+        ------
+            ValueError: If 'APPDIR' is not set in the environment.
+
         """
         if "APPDIR" not in os.environ:
-            os.environ["APPDIR"] = os.path.dirname(__file__)  # noqa: PTH120
+            msg = "APPDIR not set - please export APPDIR variable in AppRun"
+            raise ValueError(msg)
         return os.environ["APPDIR"]
 
     @cached_property
     def entry_points(self) -> Dict[str, EntryPoint]:
-        eps = entry_points()
-        scripts = eps.select(group="console_scripts")  # type: ignore[attr-defined, unused-ignore] # ignore old python < 3.10
+        """Retrieve and cache the entry points for console scripts.
+
+        This cached property method fetches and stores entry points for console scripts, organizing
+        them into a dictionary. Each entry point is indexed by both its name and its value, allowing
+        for quick access by either identifier.
+
+        Returns
+        -------
+            Dict[str, EntryPoint]: A dictionary where the keys are the names and values of the entry
+            points, and the values are the EntryPoint objects themselves.
+
+        """
+        scripts = get_entry_points(group="console_scripts")
         script_eps = {}
         for ep in scripts:
             script_eps[ep.name] = ep
@@ -123,7 +231,23 @@ class AppStarter:
         return script_eps
 
     def get_entry_point(self, *, ignore_default: bool = False) -> Optional[EntryPoint]:
+        """Retrieve the appropriate entry point based on environment variables and defaults.
 
+        This method determines the entry point to use by checking in the following order:
+        1. Environment-specified entry point (`env_ep`).
+        2. Command-line argument entry point (`argv0`).
+        3. Default entry point (`default_ep`), unless `ignore_default` is True.
+
+        Args:
+        ----
+            ignore_default (bool): If True, the default entry point (`default_ep`) will be
+            ignored. Defaults to False.
+
+        Returns:
+        -------
+            Optional[EntryPoint]: The selected entry point if found, otherwise None.
+
+        """
         if self.env_ep and self.env_ep in self.entry_points:
             return self.entry_points[self.env_ep]
         if self.argv0 and self.argv0 in self.entry_points:
@@ -137,12 +261,14 @@ class AppStarter:
         return None
 
     def start_entry_point(self) -> None:
-        """
-        Load a module and execute the function specified by the entry point.
+        """Load a module and execute the function specified by the entry point.
+
         The entry point is a string in the 'module:function' format.
 
-        Raises:
-            InvalidEntryPoint: If the entry point does not exist.
+        Raises
+        ------
+            InvalidEntryPointError: If the entry point does not exist.
+
         """
         if self.virtual_env:
             sys.executable = os.path.join(self.virtual_env, "bin/python3")
@@ -152,43 +278,73 @@ class AppStarter:
             sys.exit(entry_point_loaded())
 
         error_msg = f"'{self.env_ep or self.default_ep or self.argv0}' is not a valid entry point!"
-        raise InvalidEntryPoint(error_msg)
+        raise InvalidEntryPointError(error_msg)
 
     def start_interpreter(self) -> None:
         """Start an interactive Python interpreter using the current Python executable.
 
         It passes any additional arguments provided in the command line to the interpreter.
         """
-        if sys.executable == self.appimage:
-            sys.exit(
-                "Can not start interpreter!\n"
-                "The appimage module is not compatible with python-appimage because of unclean patches in encodings module!\n"
-                "Those patches changes the 'sys.executable' path for the whole python environment to point to the AppImage file.\n"
-                "Changing this path for all modules can result in an execution loop. Aborting interpreter execution!"
+        python_path = sys.executable
+
+        # check if sys.executable is a link or points to the AppImage
+        # In such cases the AppImage was built with "python-appimage"
+        if os.path.islink(sys.executable) or sys.executable == self.appimage:
+            new_python_path = os.path.join(
+                sys.base_prefix,
+                "bin",
+                f"python{sys.version_info[0]}.{sys.version_info[1]}",
             )
-        args = [sys.executable, "-P"]
-        if len(self.subprocess_args) > 1:
+            if os.path.isfile(new_python_path):
+                python_path = new_python_path
+
+        args = [python_path]
+        if sys.version_info >= (3, 11):
+            args.append("-P")
+        if self.subprocess_args and len(self.subprocess_args) > 1:
             args.extend(self.subprocess_args[1:])
         os.execvp(  # nosec # noqa: S606 # Starting a process without a shell
-            sys.executable, args
+            python_path,
+            args,
         )
 
     def create_venv(self, venv_dir: str) -> None:
+        """Create a virtual environment in the specified directory.
+
+        This function sets up a virtual environment using Python's built-in `venv` module. It first
+        checks if the `EnvBuilder` class has been patched to modify its behavior. If not, it applies
+        a monkey patch to the `setup_python` method of `EnvBuilder`. The virtual environment is
+        created with system site packages enabled and using symlinks.
+
+        Args:
+        ----
+            venv_dir (str): The directory where the virtual environment should be created.
+
+        """
         if not hasattr(EnvBuilder, "setup_python_original"):
             # ignore type errors from monkey patching
             EnvBuilder.setup_python_original = EnvBuilder.setup_python  # type: ignore[attr-defined]
             EnvBuilder.setup_python = setup_python_patched  # type: ignore[method-assign]
 
-        builder = EnvBuilder(symlinks=True)
+        builder = EnvBuilder(system_site_packages=True, symlinks=True)
         builder.create(venv_dir)
         sys.exit()
 
     def parse_python_args(self) -> None:
+        """Parse command-line arguments for the AppImage execution.
+
+        This function sets up an argument parser to handle various command-line options and
+        configures the environment based on the parsed arguments. It supports options for displaying
+        help, starting the Python interpreter, creating a virtual environment, and starting a Python
+        entry point from console scripts.
+
+        The `default_entry_point` argument is required and specifies the main entry point to start.
+        """
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument(
-            'default_entry_point',
+            "default_entry_point",
             type=str,
-            help='entry point to start.'
+            help="entry point to start.",
         )
         group = parser.add_mutually_exclusive_group()
         group.add_argument(
@@ -216,7 +372,7 @@ class AppStarter:
 
         args, subprocess_args = parser.parse_known_args()
         self.default_ep = args.default_entry_point
-        sys.argv = self.subprocess_args =  sys.argv[:1] + subprocess_args
+        sys.argv = self.subprocess_args = sys.argv[:1] + subprocess_args
         if args.python_interpreter:
             self.start_interpreter()
         if args.python_venv_dir:
@@ -225,13 +381,18 @@ class AppStarter:
             self.env_ep = args.python_entry_point
 
     def start(self) -> None:
+        """Determine the entry point and start it.
+
+        This method determines the appropriate entry point for the application and starts it.
+        If an interpreter is requested via environment variables, or if no entry point is found,
+        it starts an interpreter. Otherwise, it starts the determined entry point.
+
+        It performs the following steps:
+        1. Parses Python arguments to configure the environment.
+        2. Checks if a default entry point, environment entry point, or any entry point is available.
+        3. If no entry point is found or an interpreter is requested, starts the Python interpreter.
+        4. If an entry point is found, starts the determined entry point.
         """
-        Determine the entry point and start it. If an interpreter is requested via
-        environment variables, or if no entry point is found, it starts an interpreter.
-        Otherwise, it starts the determined entry point.
-        """
-        if sys.version_info < (3, 10):
-            sys.exit(f"App starter for {self.argv0} requires Python 3.10 or later")
         self.parse_python_args()
         if (
             not self.default_ep and not self.env_ep and not self.get_entry_point()
@@ -239,8 +400,21 @@ class AppStarter:
             self.start_interpreter()
         self.start_entry_point()
 
+    def setup_virtualenv(self) -> None:
+        """Set up the virtual environment for the application.
 
-    def setup_virtualenv(self):
+        This function checks if a virtual environment (VIRTUAL_ENV) is set and configures the environment
+        variables accordingly. It ensures that the Python user base and site paths are correctly
+        set up for the virtual environment.
+
+        If the virtual environment is not already set, it tries to determine the command path
+        and resolves any symbolic links to find the appropriate virtual environment directory.
+        Once the virtual environment directory is found, it updates the necessary environment
+        variables and site paths.
+
+        This function handles both direct execution within a virtual environment and scenarios
+        where the command path is a symbolic link to a virtual environment.
+        """
 
         def find_link(path: str) -> str:
             try:
@@ -252,12 +426,14 @@ class AppStarter:
         # Check if VIRTUAL_ENV is set and if the resolved python3 matches APPIMAGE
         if "VIRTUAL_ENV" in os.environ:
             resolved_python3 = os.path.abspath(
-                find_link(os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3"))
+                find_link(os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3")),
             )
             if resolved_python3 == self.appimage:
                 os.environ.pop("PYTHONNOUSERSITE", None)
                 os.environ["PYTHONUSERBASE"] = os.environ["VIRTUAL_ENV"]
-                os.environ["PATH"] = f"{os.environ['VIRTUAL_ENV']}/bin:{os.environ['PATH']}"
+                os.environ["PATH"] = (
+                    f"{os.environ['VIRTUAL_ENV']}/bin:{os.environ['PATH']}"
+                )
                 site.USER_BASE = os.environ["VIRTUAL_ENV"]
                 site.USER_SITE = os.path.join(
                     site.USER_BASE,
@@ -292,24 +468,22 @@ class AppStarter:
                 os.path.isfile(pyvenv_cfg)
                 and os.path.isfile(activate_script)
                 and os.path.islink(python_symlink)
+                and os.path.abspath(find_link(os.path.join(venv_dir, "bin", "python3")))
+                == self.appimage
             ):
-                if (
-                    os.path.abspath(find_link(os.path.join(venv_dir, "bin", "python3")))
-                    == self.appimage
-                ):
-                    # Execute the activation script
-                    os.environ.pop("PYTHONNOUSERSITE", None)
-                    os.environ["PYTHONUSERBASE"] = venv_dir
-                    os.environ["PATH"] = f"{venv_dir}/bin:{os.environ['PATH']}"
-                    site.USER_BASE = venv_dir
-                    site.USER_SITE = os.path.join(
-                        site.USER_BASE,
-                        "lib",
-                        f"python{sys.version_info[0]}.{sys.version_info[1]}",
-                        "site-packages",
-                    )
-                    sys.path.insert(0, site.USER_SITE)
-                    break
+                # Execute the activation script
+                os.environ.pop("PYTHONNOUSERSITE", None)
+                os.environ["PYTHONUSERBASE"] = venv_dir
+                os.environ["PATH"] = f"{venv_dir}/bin:{os.environ['PATH']}"
+                site.USER_BASE = venv_dir
+                site.USER_SITE = os.path.join(
+                    site.USER_BASE,
+                    "lib",
+                    f"python{sys.version_info[0]}.{sys.version_info[1]}",
+                    "site-packages",
+                )
+                sys.path.insert(0, site.USER_SITE)
+                break
 
             # Resolve one level of symlink without following further symlinks
             resolved_link = os.readlink(symlink_path)
@@ -317,15 +491,21 @@ class AppStarter:
 
 
 def start_entry_point() -> None:
-    """
-    Initiates the application start process by creating an instance of the AppStarter class
-    and calling its start method. This function acts as an entry point to begin the application's
-    execution flow.
+    """Start the application initialization process.
+
+    This function creates an instance of the AppStarter class and calls its start method.
+    It acts as an entry point to begin the application's execution flow.
 
     The `start` method of the AppStarter instance will determine the appropriate entry point
     from the available configurations and proceed to execute it. If the `start` method encounters
     any issues that it cannot handle (such as configuration errors, missing entry points, etc.),
-    it will raise an AppStartException.
+    it will raise an AppStartExceptionError.
+
+    Raises
+    ------
+        AppStartExceptionError: If the application fails to start due to configuration errors
+        or missing entry points.
+
     """
     if not os.environ.get("APPDIR"):
         sys.exit("This module must be started from an AppImage!")
@@ -333,7 +513,7 @@ def start_entry_point() -> None:
     try:
         appstarter.setup_virtualenv()
         appstarter.start()
-    except AppStartException as exc:
+    except AppStartExceptionError as exc:
         sys.exit(str(exc))
 
 
