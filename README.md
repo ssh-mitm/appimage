@@ -38,12 +38,21 @@ This example shows how to create a simple AppImage using the Python AppImage fro
 
 3. **Edit the existing AppRun script:**
 
-    Edit the `AppRun` script located in `squashfs-root/AppRun` and modify the last line to:
+    Open the `AppRun` script located in `squashfs-root/AppRun` with a text editor (e.g., vim, nano, gedit). For example, using nano:
+
+    ```sh
+    nano squashfs-root/AppRun
+    ```
+
+    Then, change the last line to:
 
     ```sh
     # Call Python
     exec "$APPDIR/opt/python3.11/bin/python3.11" -m appimage ssh-mitm "$@"
     ```
+
+    Save the changes and exit the editor.
+
 
 4. **Create the new AppImage:**
 
@@ -56,6 +65,13 @@ This example shows how to create a simple AppImage using the Python AppImage fro
     ./appimagetool-x86_64.AppImage squashfs-root/ ssh-mitm.AppImage
     ```
 
+5. **Start the created AppImage**
+
+    ```sh
+    ./ssh-mitm.AppImage server
+    ```
+
+
 You now have a new AppImage (`ssh-mitm.AppImage`) that includes the `ssh-mitm` package and uses the `appimage` module to start the application.
 
 ## Usage
@@ -63,8 +79,8 @@ You now have a new AppImage (`ssh-mitm.AppImage`) that includes the `ssh-mitm` p
 You can use the following options with the AppImage:
 
 ```sh
-./python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage --python-help
-usage: __main__.py [--python-help | --python-interpreter | --python-venv PYTHON_VENV_DIR | --python-entry-point PYTHON_ENTRY_POINT] default_entry_point
+./ssh-mitm.AppImage --python-help
+usage: ssh-mitm.AppImage [--python-help | --python-interpreter | --python-venv PYTHON_VENV_DIR | --python-entry-point PYTHON_ENTRY_POINT] default_entry_point
 
 positional arguments:
   default_entry_point   Entry point to start.
