@@ -340,7 +340,7 @@ class AppStarter:
 
         The `default_entry_point` argument is required and specifies the main entry point to start.
         """
-        parser = argparse.ArgumentParser(add_help=False)
+        parser = argparse.ArgumentParser(prog=self.argv0, add_help=False)
         parser.add_argument(
             "default_entry_point",
             type=str,
