@@ -4,7 +4,7 @@
 
 **The `appimage` module simplifies starting Python applications within an AppImage using AppRun.**
 
-Many AppImages allow only the execution of a single command, which can be limiting for more complex applications. 
+Many AppImages allow only the execution of a single command, which can be limiting for more complex applications.
 This module helps manage various entry points and virtual environments more effectively, making it easier to work with Python applications packaged as AppImages.
 
 The [SSH-MITM](https://github.com/ssh-mitm/ssh-mitm) project uses this module to facilitate plugin development and simplify further development by providing access to the integrated Python environment.
@@ -52,7 +52,7 @@ This example shows how to create a simple AppImage using the Python AppImage fro
 
     ```sh
     # Call Python
-    exec "$APPDIR/opt/python3.11/bin/python3.11" -m appimage ssh-mitm "$@"
+    exec "$APPDIR/opt/python3.11/bin/python3.11" -m appimage --python-main ssh-mitm "$@"
     ```
 
     Save the changes and exit the editor.
@@ -84,24 +84,24 @@ You can use the following options with the AppImage:
 
 ```sh
 ./ssh-mitm.AppImage --python-help
-usage: ssh-mitm.AppImage [--python-help | --python-interpreter | --python-venv PYTHON_VENV_DIR | --python-entry-point PYTHON_ENTRY_POINT] default_entry_point
-
-positional arguments:
-  default_entry_point   Entry point to start.
+usage: ssh-mitm.AppImage [--python-help] [--python-main DEFAULT_ENTRY_POINT] [--python-interpreter | --python-venv ENV_DIR [ENV_DIR ...] | --python-entry-point
+                                ENTRY_POINT]
 
 options:
   --python-help         Show this help message and exit.
-  --python-interpreter  Start the Python interpreter.
-  --python-venv PYTHON_VENV_DIR
-                        Create a virtual environment pointing to the AppImage.
-  --python-entry-point PYTHON_ENTRY_POINT
-                        Start a Python entry point from console scripts (e.g., ssh-mitm).
+  --python-main DEFAULT_ENTRY_POINT
+                        entry point to start.
+  --python-interpreter  start the python intrpreter
+  --python-venv ENV_DIR [ENV_DIR ...]
+                        Creates a virtual environment pointing to the AppImage. Shortcut for '--python-interpreter -m venv ENV_DIR --system-site-packages'.
+  --python-entry-point ENTRY_POINT
+                        start a python entry point from console scripts (e.g. ssh-mitm)
 ```
 
 **Parameter Description**
 
-- **default_entry_point** Specifies the main entry point for starting the application. This is a required positional argument.
 - **--python-help** Displays the help message and exits. Use this option to see the available commands and their usage.
+- **--python-main** Specifies the main entry point for starting the application. This is a required positional argument.
 - **--python-interpreter** Starts the Python interpreter included within the AppImage. This is useful for running Python commands interactively.
 - **--python-venv PYTHON_VENV_DIR**: Creates a virtual environment in the specified directory (`PYTHON_VENV_DIR`) that points to the Python installation within the AppImage. This virtual environment includes all the Python packages available in the AppImage, making it convenient for setting up an isolated environment with the necessary dependencies for your Python applications.
 - **--python-entry-point PYTHON_ENTRY_POINT**: Executes a specified Python entry point from the console scripts (e.g., `ssh-mitm`) or as a Python entry point (e.g., `ssmitm.cli:main`). This allows you to run specific commands or scripts packaged within the AppImage.
