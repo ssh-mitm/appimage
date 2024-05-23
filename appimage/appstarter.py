@@ -107,16 +107,19 @@ def patch_appimage_venv(context: "SimpleNamespace") -> None:
 
     """
     symlink_target = "python3"
-    # if executed as AppImage override python symlink
-    # this is not relevant for extracted AppImages
     appimage_path = os.environ.get("APPIMAGE", None)
     if not appimage_path:
-        return
+        # AppImage extracted, so we need to create a fake APPIMAGE variable
+        appidir = os.environ.get("APPDIR", None)
+        if not appidir:
+            # AppImage not properly configured, because APPDIR variable is missing - abort
+            sys.exit("APPDIR environment variable missing!")
+        appimage_path = os.path.join(appidir, "AppRun")
 
     # replace symlink to appimage instead of python executable
-    python_path = os.path.join(context.bin_path, symlink_target)
-    os.remove(python_path)
-    os.symlink(appimage_path, python_path)
+    venv_python_path = os.path.join(context.bin_path, symlink_target)
+    os.remove(venv_python_path)
+    os.symlink(appimage_path, venv_python_path)
 
     scripts = get_entry_points(group="console_scripts")
     for ep in scripts:
@@ -187,6 +190,27 @@ class AppStarter:
         self.argv0 = os.path.basename(argv0_complete) if argv0_complete else None
         self.env_ep = os.environ.get("APP_ENTRY_POINT")
         self.virtual_env = os.environ.get("VIRTUAL_ENV")
+
+    @cached_property
+    def is_niess_appimage(self) -> bool:
+        """Check if sys.executable is a link or points to the AppImage.
+
+        In such cases the AppImage was built with "niess/python-appimage"
+        """
+        return os.path.islink(sys.executable) or sys.executable == self.appimage
+
+    @cached_property
+    def python_path(self) -> str:
+        """Return the path to the python binary included in the AppImage."""
+        if self.is_niess_appimage:
+            niess_python_path = os.path.join(
+                sys.base_prefix,
+                "bin",
+                f"python{sys.version_info[0]}.{sys.version_info[1]}",
+            )
+            if os.path.isfile(niess_python_path):
+                return niess_python_path
+        return sys.executable
 
     @cached_property
     def appdir(self) -> str:
@@ -285,30 +309,22 @@ class AppStarter:
 
         It passes any additional arguments provided in the command line to the interpreter.
         """
-        python_path = sys.executable
-
-        # check if sys.executable is a link or points to the AppImage
-        # In such cases the AppImage was built with "python-appimage"
-        if os.path.islink(sys.executable) or sys.executable == self.appimage:
-            new_python_path = os.path.join(
-                sys.base_prefix,
-                "bin",
-                f"python{sys.version_info[0]}.{sys.version_info[1]}",
-            )
-            if os.path.isfile(new_python_path):
-                python_path = new_python_path
-
-        args = [python_path]
+        args = [self.python_path]
         if sys.version_info >= (3, 11):
             args.append("-P")
         if self.subprocess_args and len(self.subprocess_args) > 1:
             args.extend(self.subprocess_args[1:])
         os.execvp(  # nosec # noqa: S606 # Starting a process without a shell
-            python_path,
+            self.python_path,
             args,
         )
 
-    def create_venv(self, venv_dir: str) -> None:
+    def create_venv(
+        self,
+        *,
+        venv_dirs: str,
+        system_site_packages: bool = False,
+    ) -> None:
         """Create a virtual environment in the specified directory.
 
         This function sets up a virtual environment using Python's built-in `venv` module. It first
@@ -318,7 +334,8 @@ class AppStarter:
 
         Args:
         ----
-            venv_dir (str): The directory where the virtual environment should be created.
+            venv_dirs (str): The directories where the virtual environments should be created.
+            system_site_packages (bool): a Boolean value indicating that the system Python site-packages should be available to the environment
 
         """
         if not hasattr(EnvBuilder, "setup_python_original"):
@@ -326,9 +343,73 @@ class AppStarter:
             EnvBuilder.setup_python_original = EnvBuilder.setup_python  # type: ignore[attr-defined]
             EnvBuilder.setup_python = setup_python_patched  # type: ignore[method-assign]
 
-        builder = EnvBuilder(system_site_packages=True, symlinks=True)
-        builder.create(venv_dir)
+        builder = EnvBuilder(system_site_packages=system_site_packages, symlinks=True)
+        for venv_dir in venv_dirs:
+            builder.create(venv_dir)
         sys.exit()
+
+    def parse_venv_command(self) -> None:
+        """Parse command-line arguments for creating virtual Python environments.
+
+        This method sets up an argparse.ArgumentParser to handle arguments related
+        to the creation of virtual environments. It includes options for specifying
+        target directories and whether to include system site-packages. The method
+        also checks for the presence of the '-m venv' command in the arguments.
+
+        The recognized arguments are:
+        - ENV_DIR: One or more directories where the virtual environments will be created.
+        - --system-site-packages: A flag to allow the virtual environment to access the
+        system's site-packages directory.
+        - -m: A hidden argument used to detect if the 'venv' module is being invoked.
+
+        If the '-m venv' command is found, the method proceeds to parse the arguments
+        and calls `self.create_venv` with the specified directories and options.
+        """
+        parser = argparse.ArgumentParser(
+            prog=__name__,
+            description="Creates virtual Python "
+            "environments in one or "
+            "more target "
+            "directories.",
+            epilog="Once an environment has been "
+            "created, you may wish to "
+            "activate it, e.g. by "
+            "sourcing an activate script "
+            "in its bin directory.",
+        )
+        parser.add_argument(
+            "dirs",
+            metavar="ENV_DIR",
+            nargs="+",
+            help="A directory to create the environment in.",
+        )
+        parser.add_argument(
+            "--system-site-packages",
+            default=False,
+            action="store_true",
+            dest="system_site",
+            help="Give the virtual environment access to the "
+            "system site-packages dir.",
+        )
+        parser.add_argument(
+            "-m",
+            dest="python_module",
+            help=argparse.SUPPRESS,
+        )
+        venv_found = False
+        try:
+            index = sys.argv.index("-m")
+            if sys.argv[index + 1] == "venv":
+                venv_found = True
+        except (ValueError, IndexError):
+            pass
+        if not venv_found:
+            return
+        args = parser.parse_args(sys.argv[1:])
+        self.create_venv(
+            venv_dirs=args.dirs,
+            system_site_packages=self.is_niess_appimage or args.system_site,
+        )
 
     def parse_python_args(self) -> None:
         """Parse command-line arguments for the AppImage execution.
@@ -340,19 +421,23 @@ class AppStarter:
 
         The `default_entry_point` argument is required and specifies the main entry point to start.
         """
-        parser = argparse.ArgumentParser(prog=self.argv0, add_help=False)
-        parser.add_argument(
-            "default_entry_point",
-            type=str,
-            help="entry point to start.",
+        parser = argparse.ArgumentParser(
+            prog=self.argv0,
+            add_help=False,
+            allow_abbrev=False,
         )
-        group = parser.add_mutually_exclusive_group()
-        group.add_argument(
+        parser.add_argument(
             "--python-help",
             action="help",
             default=argparse.SUPPRESS,
             help="Show this help message and exit.",
         )
+        parser.add_argument(
+            "--python-main",
+            dest="default_entry_point",
+            help="entry point to start.",
+        )
+        group = parser.add_mutually_exclusive_group()
         group.add_argument(
             "--python-interpreter",
             dest="python_interpreter",
@@ -361,22 +446,35 @@ class AppStarter:
         )
         group.add_argument(
             "--python-venv",
-            dest="python_venv_dir",
-            help="creates a virtual env pointing to the AppImage",
+            dest="python_venv_dirs",
+            metavar="ENV_DIR",
+            nargs="+",
+            help="Creates a virtual environment pointing to the AppImage.\n"
+            "Shortcut for '--python-interpreter -m venv ENV_DIR --system-site-packages'.",
         )
         group.add_argument(
             "--python-entry-point",
             dest="python_entry_point",
+            metavar="ENTRY_POINT",
             help="start a python entry point from console scripts (e.g. ssh-mitm)",
         )
 
         args, subprocess_args = parser.parse_known_args()
+        unknown_python_args = [
+            arg for arg in subprocess_args if arg.startswith("--python-")
+        ]
+        if unknown_python_args:
+            sys.exit(
+                f"{self.argv0}: error: unrecognized python arguments:'{' '.join(unknown_python_args)}'",
+            )
+
         self.default_ep = args.default_entry_point
         sys.argv = self.subprocess_args = sys.argv[:1] + subprocess_args
         if args.python_interpreter:
+            self.parse_venv_command()
             self.start_interpreter()
-        if args.python_venv_dir:
-            self.create_venv(args.python_venv_dir)
+        if args.python_venv_dirs:
+            self.create_venv(venv_dirs=args.python_venv_dirs)
         if args.python_entry_point:
             self.env_ep = args.python_entry_point
 
@@ -397,6 +495,7 @@ class AppStarter:
         if (
             not self.default_ep and not self.env_ep and not self.get_entry_point()
         ) or self.argv0 in ["python", "python3", f"python3.{sys.version_info[1]}"]:
+            self.parse_venv_command()
             self.start_interpreter()
         self.start_entry_point()
 
