@@ -84,8 +84,10 @@ You can use the following options with the AppImage:
 
 ```sh
 ./ssh-mitm.AppImage --python-help
-usage: ssh-mitm.AppImage [--python-help] [--python-main DEFAULT_ENTRY_POINT] [--python-interpreter | --python-venv ENV_DIR [ENV_DIR ...] | --python-entry-point
-                                ENTRY_POINT]
+usage: ssh-mitm.AppImage
+    [--python-help]
+    [--python-main DEFAULT_ENTRY_POINT]
+    [--python-interpreter | --python-venv ENV_DIR [ENV_DIR ...] | --python-entry-point ENTRY_POINT]
 
 options:
   --python-help         Show this help message and exit.
