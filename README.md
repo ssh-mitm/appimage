@@ -33,7 +33,7 @@ This example shows how to create a simple AppImage using the Python AppImage fro
 2. **Install the desired Python package (e.g., ssh-mitm):**
 
     ```sh
-    ./squashfs-root/opt/python3.11/bin/python3.11 -m pip install ssh-mitm
+    ./squashfs-root/opt/python3.11/bin/python3.11 -m pip install appimage ssh-mitm
     ```
 
 3. **Edit the existing AppRun script:**
