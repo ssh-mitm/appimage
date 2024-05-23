@@ -2,11 +2,15 @@
 
 ## Overview
 
-`appimage` is a Python module that makes it easy to start applications inside an AppImage using AppRun. This module is meant to be used by the AppRun script of an AppImage and not run directly.
+**The `appimage` module simplifies starting Python applications within an AppImage using AppRun.**
 
-Many Python AppImages only allow the execution of a single command, which can be limiting for more complex applications. By using the `appimage` module, you can simplify the initialization process and manage different entry points and virtual environments more easily. This makes it more flexible and convenient to work with Python applications packaged as AppImages.
+Many AppImages allow only the execution of a single command, which can be limiting for more complex applications. 
+This module helps manage various entry points and virtual environments more effectively, making it easier to work with Python applications packaged as AppImages.
 
-A working example of its functionality is already used by the [SSH-MITM](https://github.com/ssh-mitm/ssh-mitm) project.
+The [SSH-MITM](https://github.com/ssh-mitm/ssh-mitm) project uses this module to facilitate plugin development and simplify further development by providing access to the integrated Python environment.
+
+_**Note:** This module is used by the AppRun script of an AppImage and is not intended to be executed directly._
+
 
 
 ## Features
@@ -17,7 +21,7 @@ A working example of its functionality is already used by the [SSH-MITM](https:/
 
 ## Example: Creating a Simple AppImage
 
-This example shows how to create a simple AppImage using the Python AppImage from the python-appimage project.
+This example shows how to create a simple AppImage using the Python AppImage from the [python-appimage](https://github.com/niess/python-appimage) project.
 
 ### Steps
 
@@ -30,7 +34,7 @@ This example shows how to create a simple AppImage using the Python AppImage fro
     ./python3.11.9-cp311-cp311-manylinux2014_x86_64.AppImage --appimage-extract
     ```
 
-2. **Install the desired Python package (e.g., ssh-mitm):**
+2. **Install the `appimage` package along with the desired application (e.g., `ssh-mitm`):**
 
     ```sh
     ./squashfs-root/opt/python3.11/bin/python3.11 -m pip install appimage ssh-mitm
