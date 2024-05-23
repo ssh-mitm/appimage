@@ -82,24 +82,6 @@ You now have a new AppImage (`ssh-mitm.AppImage`) that includes the `ssh-mitm` p
 
 You can use the following options with the AppImage:
 
-```sh
-./ssh-mitm.AppImage --python-help
-usage: ssh-mitm.AppImage
-    [--python-help]
-    [--python-main DEFAULT_ENTRY_POINT]
-    [--python-interpreter | --python-venv ENV_DIR [ENV_DIR ...] | --python-entry-point ENTRY_POINT]
-
-options:
-  --python-help         Show this help message and exit.
-  --python-main DEFAULT_ENTRY_POINT
-                        entry point to start.
-  --python-interpreter  start the python intrpreter
-  --python-venv ENV_DIR [ENV_DIR ...]
-                        Creates a virtual environment pointing to the AppImage. Shortcut for '--python-interpreter -m venv ENV_DIR --system-site-packages'.
-  --python-entry-point ENTRY_POINT
-                        start a python entry point from console scripts (e.g. ssh-mitm)
-```
-
 **Parameter Description**
 
 - **--python-help** Displays the help message and exits. Use this option to see the available commands and their usage.
