@@ -16,5 +16,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release on pypi.org
 
-[Unreleased]: https://github.com/ssh-mitm/appimage/compare/4.1.1...master
+[Unreleased]: https://github.com/ssh-mitm/appimage/compare/0.0.0...master
 [0.0.0]: https://github.com/ssh-mitm/appimage/releases/tag/0.0.0
