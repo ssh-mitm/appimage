@@ -85,7 +85,7 @@ You can use the following options with the AppImage:
 **Parameter Description**
 
 - **--python-help** Displays the help message and exits. Use this option to see the available commands and their usage.
-- **--python-main** Specifies the main entry point for starting the application. This is a required positional argument.
+- **--python-main** Specifies the main (default) entry point for starting the application.
 - **--python-interpreter** Starts the Python interpreter included within the AppImage. This is useful for running Python commands interactively.
 - **--python-venv PYTHON_VENV_DIR**: Creates a virtual environment in the specified directory (`PYTHON_VENV_DIR`) that points to the Python installation within the AppImage. This virtual environment includes all the Python packages available in the AppImage, making it convenient for setting up an isolated environment with the necessary dependencies for your Python applications.
 - **--python-entry-point PYTHON_ENTRY_POINT**: Executes a specified Python entry point from the console scripts (e.g., `ssh-mitm`) or as a Python entry point (e.g., `ssmitm.cli:main`). This allows you to run specific commands or scripts packaged within the AppImage.
