@@ -50,7 +50,7 @@ an example AppRun script:
         export APPDIR=$(dirname $(readlink -f "$0"))
     fi
 
-    exec "$APPDIR/opt/python3.11/bin/python3.11" -m appimage --python-main ssh-mitm "$@"
+    exec "$APPDIR/python/bin/python3" -P -m appimage --python-main ssh-mitm "$@"
 
 This script ensures that the APPDIR environment variable is set and then executes the Python
 interpreter within the AppImage, invoking the `appimage` module to start the application.
@@ -128,21 +128,10 @@ def patch_appimage_venv(context: "SimpleNamespace") -> None:
         ep_path.symlink_to(symlink_target)
 
 
-def setup_python_patched(self: EnvBuilder, context: "SimpleNamespace") -> None:
-    """Set up a Python environment with additional patching for AppImage virtual environments.
-
-    This function calls the original setup function and then applies additional patches
-    to integrate AppImage-specific modifications into the virtual environment.
-
-    Attributes
-    ----------
-        self (EnvBuilder): The environment builder instance.
-        context (SimpleNamespace): The context for the environment setup, containing configuration and state information.
-
-    """
-    # call monkey patched function
-    self.setup_python_original(context)  # type: ignore[attr-defined]
-    patch_appimage_venv(context)
+class _AppImageEnvBuilder(EnvBuilder):
+    def setup_python(self, context: "SimpleNamespace") -> None:
+        super().setup_python(context)
+        patch_appimage_venv(context)
 
 
 class AppStartExceptionError(Exception):
@@ -164,9 +153,7 @@ class AppStarter:
     def __init__(self) -> None:
         """Initialize the AppStarter instance.
 
-        This method reads the default configuration and any existing 'appimage.ini' configuration
-        file in the APPDIR. It also initializes various attributes based on the current environment
-        variables.
+        Initializes attributes based on the current environment variables.
 
         Attributes
         ----------
@@ -292,8 +279,7 @@ class AppStarter:
 
         It passes any additional arguments provided in the command line to the interpreter.
         """
-        args = [self.python_path]
-        args.append("-P")
+        args = [self.python_path, "-P"]
         if self.subprocess_args and len(self.subprocess_args) > 1:
             args.extend(self.subprocess_args[1:])
         os.execvp(  # nosec # noqa: S606 # Starting a process without a shell
@@ -320,12 +306,10 @@ class AppStarter:
             system_site_packages (bool): a Boolean value indicating that the system Python site-packages should be available to the environment
 
         """
-        if not hasattr(EnvBuilder, "setup_python_original"):
-            # ignore type errors from monkey patching
-            EnvBuilder.setup_python_original = EnvBuilder.setup_python  # type: ignore[attr-defined]
-            EnvBuilder.setup_python = setup_python_patched  # type: ignore[method-assign]
-
-        builder = EnvBuilder(system_site_packages=system_site_packages, symlinks=True)
+        builder = _AppImageEnvBuilder(
+            system_site_packages=system_site_packages,
+            symlinks=True,
+        )
         for venv_dir in venv_dirs:
             builder.create(venv_dir)
         sys.exit()
@@ -509,8 +493,10 @@ class AppStarter:
         if not Path(cmd_path).is_symlink():
             return
 
-        symlink_path = Path(cmd_path).resolve()
-        while symlink_path.is_symlink():
+        symlink_path = Path(cmd_path)
+        for _ in range(20):
+            if not symlink_path.is_symlink():
+                break
             venv_dir = symlink_path.parent.parent
             pyvenv_cfg = venv_dir / "pyvenv.cfg"
             activate_script = venv_dir / "bin" / "activate"

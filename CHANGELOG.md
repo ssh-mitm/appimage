@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed infinite loop in `setup_virtualenv` when following circular symlinks (depth limit: 20 hops)
+- Fixed symlink traversal bug in `setup_virtualenv` where `Path.resolve()` prevented the loop from ever executing
+- Fixed incorrect Python path in module docstring (`opt/python3.11/bin/python3.11` → `python/bin/python3`)
+- Removed false reference to `appimage.ini` in `AppStarter.__init__` docstring
+
+### Changed
+
+- Replaced monkey-patching of `EnvBuilder.setup_python` with a proper `_AppImageEnvBuilder` subclass
+- Black formatting check now runs only once (Python 3.11) in CI instead of once per matrix version
+- CI lint step now uses `hatch run +py=<version> lint:check` to avoid running the full matrix per job
+
 ## [1.1.1] - 2026-05-04
 
 ### Fixed

@@ -14,9 +14,9 @@ from appimage.appstarter import (
     AppStartExceptionError,
     AppStarter,
     InvalidEntryPointError,
+    _AppImageEnvBuilder,
     get_entry_points,
     patch_appimage_venv,
-    setup_python_patched,
     start_entry_point,
 )
 
@@ -68,19 +68,6 @@ def restore_sys_executable():
     yield
     sys.executable = original
 
-
-@pytest.fixture()
-def clean_env_builder():
-    """Reset EnvBuilder monkey-patch state before and after a test."""
-    original_setup = EnvBuilder.setup_python
-    had_original = hasattr(EnvBuilder, "setup_python_original")
-    if had_original:
-        del EnvBuilder.setup_python_original
-    EnvBuilder.setup_python = original_setup
-    yield
-    EnvBuilder.setup_python = original_setup
-    if hasattr(EnvBuilder, "setup_python_original"):
-        del EnvBuilder.setup_python_original
 
 
 # ---------------------------------------------------------------------------
@@ -164,17 +151,44 @@ class TestPatchAppimageVenv:
 
 
 # ---------------------------------------------------------------------------
-# setup_python_patched
+# _AppImageEnvBuilder
 # ---------------------------------------------------------------------------
 
-class TestSetupPythonPatched:
-    def test_calls_original_then_patches_venv(self):
-        builder = MagicMock()
+class TestAppImageEnvBuilder:
+    def test_is_subclass_of_env_builder(self):
+        assert issubclass(_AppImageEnvBuilder, EnvBuilder)
+
+    def test_calls_super_then_patches_venv(self):
         context = SimpleNamespace(bin_path="/venv/bin")
-        with patch("appimage.appstarter.patch_appimage_venv") as mock_patch:
-            setup_python_patched(builder, context)
-        builder.setup_python_original.assert_called_once_with(context)
+        with patch.object(EnvBuilder, "setup_python") as mock_super:
+            with patch("appimage.appstarter.patch_appimage_venv") as mock_patch:
+                builder = _AppImageEnvBuilder()
+                builder.setup_python(context)
+        mock_super.assert_called_once_with(context)
         mock_patch.assert_called_once_with(context)
+
+    def test_super_called_before_patch(self):
+        call_order = []
+        context = SimpleNamespace(bin_path="/venv/bin")
+        with patch.object(EnvBuilder, "setup_python", side_effect=lambda ctx: call_order.append("super")):
+            with patch("appimage.appstarter.patch_appimage_venv", side_effect=lambda ctx: call_order.append("patch")):
+                _AppImageEnvBuilder().setup_python(context)
+        assert call_order == ["super", "patch"]
+
+    def test_patch_exception_propagates(self):
+        context = SimpleNamespace(bin_path="/venv/bin")
+        with patch.object(EnvBuilder, "setup_python"):
+            with patch("appimage.appstarter.patch_appimage_venv", side_effect=SystemExit("APPDIR missing")):
+                with pytest.raises(SystemExit, match="APPDIR missing"):
+                    _AppImageEnvBuilder().setup_python(context)
+
+    def test_super_exception_prevents_patch(self):
+        context = SimpleNamespace(bin_path="/venv/bin")
+        with patch.object(EnvBuilder, "setup_python", side_effect=RuntimeError("setup failed")):
+            with patch("appimage.appstarter.patch_appimage_venv") as mock_patch:
+                with pytest.raises(RuntimeError):
+                    _AppImageEnvBuilder().setup_python(context)
+        mock_patch.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +413,7 @@ class TestCreateVenv:
     def test_creates_venv_for_each_dir(self):
         s = make_starter()
         mock_builder = MagicMock()
-        with patch("appimage.appstarter.EnvBuilder", return_value=mock_builder):
+        with patch("appimage.appstarter._AppImageEnvBuilder", return_value=mock_builder):
             with pytest.raises(SystemExit):
                 s.create_venv(venv_dirs=["/venv1", "/venv2"])
         mock_builder.create.assert_any_call("/venv1")
@@ -408,13 +422,13 @@ class TestCreateVenv:
 
     def test_always_exits_after_creating(self):
         s = make_starter()
-        with patch("appimage.appstarter.EnvBuilder"):
+        with patch("appimage.appstarter._AppImageEnvBuilder"):
             with pytest.raises(SystemExit):
                 s.create_venv(venv_dirs=["/venv"])
 
     def test_passes_system_site_packages_to_builder(self):
         s = make_starter()
-        with patch("appimage.appstarter.EnvBuilder") as MockCls:
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
             MockCls.return_value = MagicMock()
             with pytest.raises(SystemExit):
                 s.create_venv(venv_dirs=["/venv"], system_site_packages=True)
@@ -422,34 +436,20 @@ class TestCreateVenv:
 
     def test_uses_symlinks(self):
         s = make_starter()
-        with patch("appimage.appstarter.EnvBuilder") as MockCls:
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
             MockCls.return_value = MagicMock()
             with pytest.raises(SystemExit):
                 s.create_venv(venv_dirs=["/venv"])
         _, kwargs = MockCls.call_args
         assert kwargs.get("symlinks") is True
 
-    def test_monkey_patches_env_builder_on_first_call(self, clean_env_builder):
-        from appimage.appstarter import setup_python_patched
+    def test_uses_appimage_env_builder(self):
         s = make_starter()
-        with patch("appimage.appstarter.EnvBuilder", EnvBuilder):
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
+            MockCls.return_value = MagicMock()
             with pytest.raises(SystemExit):
-                s.create_venv(venv_dirs=["/tmp/test_venv_unused"])
-        assert hasattr(EnvBuilder, "setup_python_original")
-        assert EnvBuilder.setup_python is setup_python_patched
-
-    def test_monkey_patch_applied_only_once(self, clean_env_builder):
-        s = make_starter()
-        original_setup = EnvBuilder.setup_python
-        with patch("appimage.appstarter.EnvBuilder", EnvBuilder):
-            with pytest.raises(SystemExit):
-                s.create_venv(venv_dirs=["/tmp/unused1"])
-        first_original = EnvBuilder.setup_python_original
-
-        with patch("appimage.appstarter.EnvBuilder", EnvBuilder):
-            with pytest.raises(SystemExit):
-                s.create_venv(venv_dirs=["/tmp/unused2"])
-        assert EnvBuilder.setup_python_original is first_original
+                s.create_venv(venv_dirs=["/venv"])
+        MockCls.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -748,6 +748,19 @@ class TestSetupVirtualenv:
         # After following the relative symlink "python3" from /venv/bin/ssh-mitm,
         # the next islink check must be for /venv/bin/python3 (not ./python3 from CWD).
         assert resolved_python in islink_calls
+
+    def test_symlink_depth_limit_prevents_infinite_loop(self):
+        s = make_starter(appimage=self.APPIMAGE, argv0="ssh-mitm")
+        cmd = "/venv/bin/ssh-mitm"
+        with patch.dict(os.environ, {"ARGV0": cmd}, clear=True):
+            with patch.object(Path, "is_symlink", return_value=True):
+                with patch.object(Path, "is_file", return_value=False):
+                    with patch("os.path.realpath", return_value="/other"):
+                        with patch.object(Path, "readlink", new=lambda self: Path("python3")):
+                            with patch.object(Path, "resolve", new=lambda self, strict=False: self):
+                                with patch.object(s, "_activate_venv") as mock_activate:
+                                    s.setup_virtualenv()
+        mock_activate.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
