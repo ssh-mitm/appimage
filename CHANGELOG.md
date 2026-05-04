@@ -13,12 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed symlink traversal bug in `setup_virtualenv` where `Path.resolve()` prevented the loop from ever executing
 - Fixed incorrect Python path in module docstring (`opt/python3.11/bin/python3.11` → `python/bin/python3`)
 - Removed false reference to `appimage.ini` in `AppStarter.__init__` docstring
+- Fixed `mkdir -p build` in README build script example — `build/AppDir` was never created, causing `tar` to fail
 
 ### Changed
 
 - Replaced monkey-patching of `EnvBuilder.setup_python` with a proper `_AppImageEnvBuilder` subclass
 - Black formatting check now runs only once (Python 3.11) in CI instead of once per matrix version
 - CI lint step now uses `hatch run +py=<version> lint:check` to avoid running the full matrix per job
+- README build script now resolves the Python download URL dynamically from the GitHub API using only `PYTHON_MINOR` (e.g. `3.11`), eliminating the need to manually track patch versions and release dates
 
 ## [1.1.1] - 2026-05-04
 

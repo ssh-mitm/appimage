@@ -62,15 +62,22 @@ Supported architectures:
 | `aarch64` | `aarch64` |
 | `armv7l` | `armv7` |
 
-To find the latest release tag via the GitHub API:
+To resolve the download URL for a specific Python minor version and the current architecture, run:
 
 ```sh
-curl -s "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest" \
-  | grep '"tag_name"' | cut -d'"' -f4
+PYTHON_MINOR="3.11"  # change to 3.12, 3.13, etc. as needed
+RELEASE_DATE=$(curl -s "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest" \
+  | grep '"tag_name"' | cut -d'"' -f4)
+curl -s "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/${RELEASE_DATE}" \
+  | grep '"browser_download_url"' \
+  | grep "cpython-${PYTHON_MINOR}\." \
+  | grep "$(uname -m)-unknown-linux-gnu-install_only_stripped" \
+  | grep -v "freethreaded" \
+  | cut -d'"' -f4
 ```
 
-> **Tip:** Pin the release date and Python version in your build script for reproducible builds.
-> Only update deliberately after testing.
+> **Tip:** Set only `PYTHON_MINOR` to switch between Python series (3.11, 3.12, 3.13 …).
+> Pin `RELEASE_DATE` explicitly in the build script for reproducible builds; omit it to always use the latest release.
 
 ### 2. AppRun script
 
@@ -130,14 +137,30 @@ if [ "$ARCH" = "armv7l" ]; then
     PBS_ARCH="armv7"
 fi
 
-PYTHON_VERSION="3.11.14"
-RELEASE_DATE="20260211"
-PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${RELEASE_DATE}/cpython-${PYTHON_VERSION}+${RELEASE_DATE}-${PBS_ARCH}-unknown-linux-gnu-install_only_stripped.tar.gz"
+# Set the Python minor version — change to 3.12, 3.13, etc. as needed
+PYTHON_MINOR="3.11"
+
+# Resolve the latest release date and matching download URL automatically
+RELEASE_DATE=$(curl -s "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest" \
+  | grep '"tag_name"' | cut -d'"' -f4)
+PYTHON_URL=$(curl -s "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/${RELEASE_DATE}" \
+  | grep '"browser_download_url"' \
+  | grep "cpython-${PYTHON_MINOR}\." \
+  | grep "${PBS_ARCH}-unknown-linux-gnu-install_only_stripped" \
+  | grep -v "freethreaded" \
+  | head -1 \
+  | cut -d'"' -f4)
+
+if [ -z "$PYTHON_URL" ]; then
+    echo "Error: no Python ${PYTHON_MINOR} asset found for ${PBS_ARCH} in release ${RELEASE_DATE}" >&2
+    exit 1
+fi
+
 APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${ARCH}.AppImage"
 
 # Prepare AppDir
 rm -rf build/AppDir
-mkdir -p build
+mkdir -p build/AppDir
 
 # Download and extract Python (cached)
 if [ ! -f build/python.tar.gz ]; then
