@@ -50,7 +50,7 @@ an example AppRun script:
         export APPDIR=$(dirname $(readlink -f "$0"))
     fi
 
-    exec "$APPDIR/opt/python3.11/bin/python3.11" -m appimage ssh-mitm "$@"
+    exec "$APPDIR/opt/python3.11/bin/python3.11" -m appimage --python-main ssh-mitm "$@"
 
 This script ensures that the APPDIR environment variable is set and then executes the Python
 interpreter within the AppImage, invoking the `appimage` module to start the application.
@@ -89,7 +89,7 @@ def get_entry_points(group: str) -> List[EntryPoint]:
     eps = entry_points()
     if sys.version_info >= (3, 10):
         return list(eps.select(group=group))
-    return list(eps[group])
+    return list(eps.get(group, []))  # type: ignore[union-attr]
 
 
 def patch_appimage_venv(context: "SimpleNamespace") -> None:
@@ -192,24 +192,8 @@ class AppStarter:
         self.virtual_env = os.environ.get("VIRTUAL_ENV")
 
     @cached_property
-    def is_niess_appimage(self) -> bool:
-        """Check if sys.executable is a link or points to the AppImage.
-
-        In such cases the AppImage was built with "niess/python-appimage"
-        """
-        return os.path.islink(sys.executable) or sys.executable == self.appimage
-
-    @cached_property
     def python_path(self) -> str:
         """Return the path to the python binary included in the AppImage."""
-        if self.is_niess_appimage:
-            niess_python_path = os.path.join(
-                sys.base_prefix,
-                "bin",
-                f"python{sys.version_info[0]}.{sys.version_info[1]}",
-            )
-            if os.path.isfile(niess_python_path):
-                return niess_python_path
         return sys.executable
 
     @cached_property
@@ -408,7 +392,7 @@ class AppStarter:
         args = parser.parse_args(sys.argv[1:])
         self.create_venv(
             venv_dirs=args.dirs,
-            system_site_packages=self.is_niess_appimage or args.system_site,
+            system_site_packages=args.system_site,
         )
 
     def parse_python_args(self) -> None:
@@ -442,7 +426,7 @@ class AppStarter:
             "--python-interpreter",
             dest="python_interpreter",
             action="store_true",
-            help="start the python intrpreter",
+            help="start the python interpreter",
         )
         group.add_argument(
             "--python-venv",
@@ -502,56 +486,28 @@ class AppStarter:
     def setup_virtualenv(self) -> None:
         """Set up the virtual environment for the application.
 
-        This function checks if a virtual environment (VIRTUAL_ENV) is set and configures the environment
-        variables accordingly. It ensures that the Python user base and site paths are correctly
-        set up for the virtual environment.
-
-        If the virtual environment is not already set, it tries to determine the command path
-        and resolves any symbolic links to find the appropriate virtual environment directory.
-        Once the virtual environment directory is found, it updates the necessary environment
-        variables and site paths.
-
-        This function handles both direct execution within a virtual environment and scenarios
-        where the command path is a symbolic link to a virtual environment.
+        Checks if VIRTUAL_ENV is active and its python3 symlink resolves to this AppImage,
+        then configures the environment accordingly. If not, checks whether the command used
+        to invoke the AppImage is itself a symlink inside a venv that points back to this
+        AppImage, and activates that venv.
         """
-
-        def find_link(path: str) -> str:
-            try:
-                link = os.readlink(path)
-                return find_link(link)
-            except OSError:  # if the last is not symbolic file will throw OSError
-                return path
-
-        # Check if VIRTUAL_ENV is set and if the resolved python3 matches APPIMAGE
         if "VIRTUAL_ENV" in os.environ:
-            resolved_python3 = os.path.abspath(
-                find_link(os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3")),
+            resolved_python3 = os.path.realpath(
+                os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3"),
             )
             if resolved_python3 == self.appimage:
-                os.environ.pop("PYTHONNOUSERSITE", None)
-                os.environ["PYTHONUSERBASE"] = os.environ["VIRTUAL_ENV"]
-                os.environ["PATH"] = (
-                    f"{os.environ['VIRTUAL_ENV']}/bin:{os.environ['PATH']}"
-                )
-                site.USER_BASE = os.environ["VIRTUAL_ENV"]
-                site.USER_SITE = os.path.join(
-                    site.USER_BASE,
-                    "lib",
-                    f"python{sys.version_info[0]}.{sys.version_info[1]}",
-                    "site-packages",
-                )
-                sys.path.insert(0, site.USER_SITE)
+                self._activate_venv(os.environ["VIRTUAL_ENV"])
                 return
 
-        # Determine the command path
         if not self.argv0:
             return
-        if "/" in self.argv0:
-            cmd_path = self.argv0
+
+        argv0_full = os.environ.get("ARGV0", "")
+        if "/" in argv0_full:
+            cmd_path = argv0_full
         else:
             cmd_path = shutil.which(self.argv0) or "AppRun"
 
-        # If environment not loaded and CMD_PATH is a symlink
         if not os.path.islink(cmd_path):
             return
 
@@ -562,31 +518,33 @@ class AppStarter:
             activate_script = os.path.join(venv_dir, "bin", "activate")
             python_symlink = os.path.join(venv_dir, "bin", "python3")
 
-            # Check if the potential VENV_DIR is valid
             if (
                 os.path.isfile(pyvenv_cfg)
                 and os.path.isfile(activate_script)
                 and os.path.islink(python_symlink)
-                and os.path.abspath(find_link(os.path.join(venv_dir, "bin", "python3")))
-                == self.appimage
+                and os.path.realpath(python_symlink) == self.appimage
             ):
-                # Execute the activation script
-                os.environ.pop("PYTHONNOUSERSITE", None)
-                os.environ["PYTHONUSERBASE"] = venv_dir
-                os.environ["PATH"] = f"{venv_dir}/bin:{os.environ['PATH']}"
-                site.USER_BASE = venv_dir
-                site.USER_SITE = os.path.join(
-                    site.USER_BASE,
-                    "lib",
-                    f"python{sys.version_info[0]}.{sys.version_info[1]}",
-                    "site-packages",
-                )
-                sys.path.insert(0, site.USER_SITE)
+                self._activate_venv(venv_dir)
                 break
 
-            # Resolve one level of symlink without following further symlinks
-            resolved_link = os.readlink(symlink_path)
-            symlink_path = os.path.realpath(resolved_link)
+            raw_link = os.readlink(symlink_path)
+            if not os.path.isabs(raw_link):
+                raw_link = os.path.join(os.path.dirname(symlink_path), raw_link)
+            symlink_path = os.path.abspath(raw_link)
+
+    def _activate_venv(self, venv_dir: str) -> None:
+        """Configure environment variables to use the given venv directory."""
+        os.environ.pop("PYTHONNOUSERSITE", None)
+        os.environ["PYTHONUSERBASE"] = venv_dir
+        os.environ["PATH"] = f"{venv_dir}/bin:{os.environ['PATH']}"
+        site.USER_BASE = venv_dir
+        site.USER_SITE = os.path.join(
+            venv_dir,
+            "lib",
+            f"python{sys.version_info[0]}.{sys.version_info[1]}",
+            "site-packages",
+        )
+        sys.path.insert(0, site.USER_SITE)
 
 
 def start_entry_point() -> None:
