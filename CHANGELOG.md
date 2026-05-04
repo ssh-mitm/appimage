@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced [python-appimage](https://github.com/niess/python-appimage) support with [astral.sh](https://astral.sh) as the standard AppImage base
+- Migrated version management from `bumpversion` to `bump-my-version` (config in `pyproject.toml`)
+- Updated GitHub Actions to current versions (`actions/checkout@v4`, `actions/setup-python@v5`)
+- Migrated PyPI publishing to Trusted Publisher (OIDC), removing the need for a `PYPI_PASSWORD` secret
+
+### Removed
+
+- Removed support for [python-appimage](https://github.com/niess/python-appimage) by niess
+
 ## [1.0.0] - 2024-05-27
 
 ### Added

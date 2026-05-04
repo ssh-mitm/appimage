@@ -64,14 +64,15 @@ import site
 import sys
 from functools import cached_property
 from importlib.metadata import EntryPoint, entry_points
-from typing import TYPE_CHECKING, Dict, List, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING
 from venv import EnvBuilder
 
 if TYPE_CHECKING:
     from types import SimpleNamespace
 
 
-def get_entry_points(group: str) -> List[EntryPoint]:
+def get_entry_points(group: str) -> list[EntryPoint]:
     """Retrieve a list of entry points for a specified group.
 
     This function fetches entry points from the current Python environment. It is compatible
@@ -87,9 +88,7 @@ def get_entry_points(group: str) -> List[EntryPoint]:
 
     """
     eps = entry_points()
-    if sys.version_info >= (3, 10):
-        return list(eps.select(group=group))
-    return list(eps.get(group, []))  # type: ignore[union-attr]
+    return list(eps.select(group=group))
 
 
 def patch_appimage_venv(context: "SimpleNamespace") -> None:
@@ -114,19 +113,19 @@ def patch_appimage_venv(context: "SimpleNamespace") -> None:
         if not appidir:
             # AppImage not properly configured, because APPDIR variable is missing - abort
             sys.exit("APPDIR environment variable missing!")
-        appimage_path = os.path.join(appidir, "AppRun")
+        appimage_path = str(Path(appidir) / "AppRun")
 
     # replace symlink to appimage instead of python executable
-    venv_python_path = os.path.join(context.bin_path, symlink_target)
-    os.remove(venv_python_path)
-    os.symlink(appimage_path, venv_python_path)
+    venv_python_path = Path(context.bin_path) / symlink_target
+    venv_python_path.unlink()
+    venv_python_path.symlink_to(appimage_path)
 
     scripts = get_entry_points(group="console_scripts")
     for ep in scripts:
-        ep_path = os.path.join(context.bin_path, ep.name)
-        if os.path.isfile(ep_path):
+        ep_path = Path(context.bin_path) / ep.name
+        if ep_path.is_file():
             continue
-        os.symlink(symlink_target, ep_path)
+        ep_path.symlink_to(symlink_target)
 
 
 def setup_python_patched(self: EnvBuilder, context: "SimpleNamespace") -> None:
@@ -182,12 +181,12 @@ class AppStarter:
                                         environment variable is set.
 
         """
-        self.default_ep: Optional[str] = None
-        self.subprocess_args: Optional[List[str]] = None
+        self.default_ep: str | None = None
+        self.subprocess_args: list[str] | None = None
         appimage_env = os.environ.get("APPIMAGE", None)
-        self.appimage = os.path.abspath(appimage_env) if appimage_env else None
+        self.appimage = str(Path(appimage_env).resolve()) if appimage_env else None
         argv0_complete = os.environ.get("ARGV0", None)
-        self.argv0 = os.path.basename(argv0_complete) if argv0_complete else None
+        self.argv0 = Path(argv0_complete).name if argv0_complete else None
         self.env_ep = os.environ.get("APP_ENTRY_POINT")
         self.virtual_env = os.environ.get("VIRTUAL_ENV")
 
@@ -218,7 +217,7 @@ class AppStarter:
         return os.environ["APPDIR"]
 
     @cached_property
-    def entry_points(self) -> Dict[str, EntryPoint]:
+    def entry_points(self) -> dict[str, EntryPoint]:
         """Retrieve and cache the entry points for console scripts.
 
         This cached property method fetches and stores entry points for console scripts, organizing
@@ -238,7 +237,7 @@ class AppStarter:
             script_eps[ep.value] = ep
         return script_eps
 
-    def get_entry_point(self, *, ignore_default: bool = False) -> Optional[EntryPoint]:
+    def get_entry_point(self, *, ignore_default: bool = False) -> EntryPoint | None:
         """Retrieve the appropriate entry point based on environment variables and defaults.
 
         This method determines the entry point to use by checking in the following order:
@@ -279,7 +278,7 @@ class AppStarter:
 
         """
         if self.virtual_env:
-            sys.executable = os.path.join(self.virtual_env, "bin/python3")
+            sys.executable = str(Path(self.virtual_env) / "bin/python3")
         entry_point = self.get_entry_point()
         if entry_point:
             entry_point_loaded = entry_point.load()
@@ -294,8 +293,7 @@ class AppStarter:
         It passes any additional arguments provided in the command line to the interpreter.
         """
         args = [self.python_path]
-        if sys.version_info >= (3, 11):
-            args.append("-P")
+        args.append("-P")
         if self.subprocess_args and len(self.subprocess_args) > 1:
             args.extend(self.subprocess_args[1:])
         os.execvp(  # nosec # noqa: S606 # Starting a process without a shell
@@ -493,7 +491,7 @@ class AppStarter:
         """
         if "VIRTUAL_ENV" in os.environ:
             resolved_python3 = os.path.realpath(
-                os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3"),
+                str(Path(os.environ["VIRTUAL_ENV"]) / "bin" / "python3"),
             )
             if resolved_python3 == self.appimage:
                 self._activate_venv(os.environ["VIRTUAL_ENV"])
@@ -508,29 +506,29 @@ class AppStarter:
         else:
             cmd_path = shutil.which(self.argv0) or "AppRun"
 
-        if not os.path.islink(cmd_path):
+        if not Path(cmd_path).is_symlink():
             return
 
-        symlink_path = os.path.abspath(cmd_path)
-        while os.path.islink(symlink_path):
-            venv_dir = os.path.dirname(os.path.dirname(symlink_path))
-            pyvenv_cfg = os.path.join(venv_dir, "pyvenv.cfg")
-            activate_script = os.path.join(venv_dir, "bin", "activate")
-            python_symlink = os.path.join(venv_dir, "bin", "python3")
+        symlink_path = Path(cmd_path).resolve()
+        while symlink_path.is_symlink():
+            venv_dir = symlink_path.parent.parent
+            pyvenv_cfg = venv_dir / "pyvenv.cfg"
+            activate_script = venv_dir / "bin" / "activate"
+            python_symlink = venv_dir / "bin" / "python3"
 
             if (
-                os.path.isfile(pyvenv_cfg)
-                and os.path.isfile(activate_script)
-                and os.path.islink(python_symlink)
-                and os.path.realpath(python_symlink) == self.appimage
+                pyvenv_cfg.is_file()
+                and activate_script.is_file()
+                and python_symlink.is_symlink()
+                and os.path.realpath(str(python_symlink)) == self.appimage
             ):
-                self._activate_venv(venv_dir)
+                self._activate_venv(str(venv_dir))
                 break
 
-            raw_link = os.readlink(symlink_path)
-            if not os.path.isabs(raw_link):
-                raw_link = os.path.join(os.path.dirname(symlink_path), raw_link)
-            symlink_path = os.path.abspath(raw_link)
+            raw_link = symlink_path.readlink()
+            if not raw_link.is_absolute():
+                raw_link = symlink_path.parent / raw_link
+            symlink_path = raw_link.resolve()
 
     def _activate_venv(self, venv_dir: str) -> None:
         """Configure environment variables to use the given venv directory."""
@@ -538,11 +536,11 @@ class AppStarter:
         os.environ["PYTHONUSERBASE"] = venv_dir
         os.environ["PATH"] = f"{venv_dir}/bin:{os.environ['PATH']}"
         site.USER_BASE = venv_dir
-        site.USER_SITE = os.path.join(
-            venv_dir,
-            "lib",
-            f"python{sys.version_info[0]}.{sys.version_info[1]}",
-            "site-packages",
+        site.USER_SITE = str(
+            Path(venv_dir)
+            / "lib"
+            / f"python{sys.version_info[0]}.{sys.version_info[1]}"
+            / "site-packages",
         )
         sys.path.insert(0, site.USER_SITE)
 

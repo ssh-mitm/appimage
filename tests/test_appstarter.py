@@ -3,6 +3,7 @@
 import os
 import site
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 from venv import EnvBuilder
@@ -97,22 +98,11 @@ class TestGetEntryPoints:
         mock_eps.select.assert_called_once_with(group="console_scripts")
         assert result == [ep]
 
-    def test_python_39_uses_get(self):
-        ep = make_ep("ssh-mitm")
+    def test_missing_group_returns_empty(self):
         mock_eps = MagicMock()
-        mock_eps.get.return_value = [ep]
+        mock_eps.select.return_value = []
         with patch("appimage.appstarter.entry_points", return_value=mock_eps):
-            with patch.object(sys, "version_info", (3, 9, 0)):
-                result = get_entry_points("console_scripts")
-        mock_eps.get.assert_called_once_with("console_scripts", [])
-        assert result == [ep]
-
-    def test_python_39_missing_group_returns_empty(self):
-        mock_eps = MagicMock()
-        mock_eps.get.return_value = []
-        with patch("appimage.appstarter.entry_points", return_value=mock_eps):
-            with patch.object(sys, "version_info", (3, 9, 0)):
-                result = get_entry_points("nonexistent_group")
+            result = get_entry_points("nonexistent_group")
         assert result == []
 
 
@@ -124,21 +114,21 @@ class TestPatchAppimageVenv:
     def test_replaces_python3_symlink_with_appimage(self):
         context = SimpleNamespace(bin_path="/venv/bin")
         with patch.dict(os.environ, {"APPIMAGE": "/app.AppImage"}, clear=True):
-            with patch("os.remove") as mock_remove:
-                with patch("os.symlink") as mock_symlink:
+            with patch.object(Path, "unlink") as mock_unlink:
+                with patch.object(Path, "symlink_to") as mock_symlink_to:
                     with patch("appimage.appstarter.get_entry_points", return_value=[]):
                         patch_appimage_venv(context)
-        mock_remove.assert_called_once_with("/venv/bin/python3")
-        mock_symlink.assert_called_once_with("/app.AppImage", "/venv/bin/python3")
+        mock_unlink.assert_called_once()
+        mock_symlink_to.assert_called_once_with("/app.AppImage")
 
     def test_fallback_to_appdir_apprun_when_no_appimage(self):
         context = SimpleNamespace(bin_path="/venv/bin")
         with patch.dict(os.environ, {"APPDIR": "/appdir"}, clear=True):
-            with patch("os.remove"):
-                with patch("os.symlink") as mock_symlink:
+            with patch.object(Path, "unlink"):
+                with patch.object(Path, "symlink_to") as mock_symlink_to:
                     with patch("appimage.appstarter.get_entry_points", return_value=[]):
                         patch_appimage_venv(context)
-        mock_symlink.assert_called_once_with("/appdir/AppRun", "/venv/bin/python3")
+        mock_symlink_to.assert_called_once_with("/appdir/AppRun")
 
     def test_exits_without_appimage_or_appdir(self):
         context = SimpleNamespace(bin_path="/venv/bin")
@@ -149,25 +139,28 @@ class TestPatchAppimageVenv:
     def test_creates_missing_console_script_symlinks(self):
         context = SimpleNamespace(bin_path="/venv/bin")
         ep = make_ep("ssh-mitm")
+        symlink_calls = []
+        def symlink_to(self, target):
+            symlink_calls.append((str(self), str(target)))
         with patch.dict(os.environ, {"APPIMAGE": "/app.AppImage"}, clear=True):
-            with patch("os.remove"):
-                with patch("os.symlink") as mock_symlink:
-                    with patch("os.path.isfile", return_value=False):
+            with patch.object(Path, "unlink"):
+                with patch.object(Path, "symlink_to", new=symlink_to):
+                    with patch.object(Path, "is_file", return_value=False):
                         with patch("appimage.appstarter.get_entry_points", return_value=[ep]):
                             patch_appimage_venv(context)
-        assert mock_symlink.call_count == 2
-        mock_symlink.assert_any_call("python3", "/venv/bin/ssh-mitm")
+        assert len(symlink_calls) == 2
+        assert ("/venv/bin/ssh-mitm", "python3") in symlink_calls
 
     def test_skips_already_existing_entry_point_files(self):
         context = SimpleNamespace(bin_path="/venv/bin")
         ep = make_ep("ssh-mitm")
         with patch.dict(os.environ, {"APPIMAGE": "/app.AppImage"}, clear=True):
-            with patch("os.remove"):
-                with patch("os.symlink") as mock_symlink:
-                    with patch("os.path.isfile", return_value=True):
+            with patch.object(Path, "unlink"):
+                with patch.object(Path, "symlink_to") as mock_symlink_to:
+                    with patch.object(Path, "is_file", return_value=True):
                         with patch("appimage.appstarter.get_entry_points", return_value=[ep]):
                             patch_appimage_venv(context)
-        assert mock_symlink.call_count == 1  # only python3 replacement
+        assert mock_symlink_to.call_count == 1  # only python3 replacement
 
 
 # ---------------------------------------------------------------------------
@@ -378,17 +371,7 @@ class TestStartInterpreter:
         s.subprocess_args = ["/python"]
         s.__dict__["python_path"] = "/python"
         with patch("os.execvp") as mock_execvp:
-            with patch.object(sys, "version_info", (3, 10, 0)):
-                s.start_interpreter()
-        mock_execvp.assert_called_once_with("/python", ["/python"])
-
-    def test_adds_P_flag_on_python_311(self):
-        s = make_starter()
-        s.subprocess_args = ["/python"]
-        s.__dict__["python_path"] = "/python"
-        with patch("os.execvp") as mock_execvp:
-            with patch.object(sys, "version_info", (3, 11, 0)):
-                s.start_interpreter()
+            s.start_interpreter()
         mock_execvp.assert_called_once_with("/python", ["/python", "-P"])
 
     def test_passes_additional_subprocess_args(self):
@@ -396,18 +379,16 @@ class TestStartInterpreter:
         s.subprocess_args = ["/python", "script.py", "--flag"]
         s.__dict__["python_path"] = "/python"
         with patch("os.execvp") as mock_execvp:
-            with patch.object(sys, "version_info", (3, 10, 0)):
-                s.start_interpreter()
-        mock_execvp.assert_called_once_with("/python", ["/python", "script.py", "--flag"])
+            s.start_interpreter()
+        mock_execvp.assert_called_once_with("/python", ["/python", "-P", "script.py", "--flag"])
 
     def test_no_extra_args_when_subprocess_args_is_none(self):
         s = make_starter()
         s.subprocess_args = None
         s.__dict__["python_path"] = "/python"
         with patch("os.execvp") as mock_execvp:
-            with patch.object(sys, "version_info", (3, 10, 0)):
-                s.start_interpreter()
-        mock_execvp.assert_called_once_with("/python", ["/python"])
+            s.start_interpreter()
+        mock_execvp.assert_called_once_with("/python", ["/python", "-P"])
 
 
 # ---------------------------------------------------------------------------
@@ -690,26 +671,29 @@ class TestSetupVirtualenv:
 
     def test_uses_full_argv0_path_when_slash_present(self):
         s = make_starter(appimage=self.APPIMAGE, argv0="ssh-mitm")
+        islink_paths = []
+        def is_symlink(self_path):
+            islink_paths.append(str(self_path))
+            return False
         with patch.dict(os.environ, {"ARGV0": "/venv/bin/ssh-mitm"}, clear=True):
-            with patch("os.path.islink", return_value=False) as mock_islink:
+            with patch.object(Path, "is_symlink", new=is_symlink):
                 with patch.object(s, "_activate_venv"):
                     s.setup_virtualenv()
         # cmd_path should be the full ARGV0 value, not the result of shutil.which
-        first_islink_arg = mock_islink.call_args_list[0][0][0]
-        assert first_islink_arg == "/venv/bin/ssh-mitm"
+        assert islink_paths[0] == "/venv/bin/ssh-mitm"
 
     def test_uses_shutil_which_when_argv0_has_no_slash(self):
         s = make_starter(appimage=self.APPIMAGE, argv0="ssh-mitm")
         with patch.dict(os.environ, {"ARGV0": "ssh-mitm"}, clear=True):
             with patch("shutil.which", return_value=None) as mock_which:
-                with patch("os.path.islink", return_value=False):
+                with patch.object(Path, "is_symlink", return_value=False):
                     s.setup_virtualenv()
         mock_which.assert_called_once_with("ssh-mitm")
 
     def test_no_activation_when_cmd_path_is_not_symlink(self):
         s = make_starter(appimage=self.APPIMAGE, argv0="ssh-mitm")
         with patch.dict(os.environ, {"ARGV0": "/venv/bin/ssh-mitm"}, clear=True):
-            with patch("os.path.islink", return_value=False):
+            with patch.object(Path, "is_symlink", return_value=False):
                 with patch.object(s, "_activate_venv") as mock_activate:
                     s.setup_virtualenv()
         mock_activate.assert_not_called()
@@ -718,22 +702,22 @@ class TestSetupVirtualenv:
         s = make_starter(appimage=self.APPIMAGE, argv0="ssh-mitm")
         venv_dir = "/venv"
         cmd = f"{venv_dir}/bin/ssh-mitm"
-        python_symlink = f"{venv_dir}/bin/python3"
+        python_symlink_str = f"{venv_dir}/bin/python3"
 
-        def islink(path):
-            return path in [cmd, python_symlink]
+        def is_symlink(self_path):
+            return str(self_path) in [cmd, python_symlink_str]
 
-        def isfile(path):
-            return path in [f"{venv_dir}/pyvenv.cfg", f"{venv_dir}/bin/activate"]
+        def is_file(self_path):
+            return str(self_path) in [f"{venv_dir}/pyvenv.cfg", f"{venv_dir}/bin/activate"]
 
         def realpath(path):
             return self.APPIMAGE if "python3" in path else path
 
         with patch.dict(os.environ, {"ARGV0": cmd}, clear=True):
-            with patch("os.path.islink", side_effect=islink):
-                with patch("os.path.isfile", side_effect=isfile):
+            with patch.object(Path, "is_symlink", new=is_symlink):
+                with patch.object(Path, "is_file", new=is_file):
                     with patch("os.path.realpath", side_effect=realpath):
-                        with patch("os.path.abspath", side_effect=lambda p: p):
+                        with patch.object(Path, "resolve", new=lambda self, strict=False: self):
                             with patch.object(s, "_activate_venv") as mock_activate:
                                 s.setup_virtualenv()
         mock_activate.assert_called_once_with(venv_dir)
@@ -747,16 +731,17 @@ class TestSetupVirtualenv:
 
         islink_calls: list = []
 
-        def islink(path):
-            islink_calls.append(path)
-            return path == cmd  # only the command is a symlink
+        def is_symlink(self_path):
+            path_str = str(self_path)
+            islink_calls.append(path_str)
+            return path_str == cmd
 
         with patch.dict(os.environ, {"ARGV0": cmd}, clear=True):
-            with patch("os.path.islink", side_effect=islink):
-                with patch("os.path.isfile", return_value=False):
+            with patch.object(Path, "is_symlink", new=is_symlink):
+                with patch.object(Path, "is_file", new=lambda self: False):
                     with patch("os.path.realpath", return_value="/other"):
-                        with patch("os.readlink", return_value="python3"):
-                            with patch("os.path.abspath", side_effect=os.path.abspath):
+                        with patch.object(Path, "readlink", new=lambda self: Path("python3")):
+                            with patch.object(Path, "resolve", new=lambda self, strict=False: self):
                                 with patch.object(s, "_activate_venv"):
                                     s.setup_virtualenv()
 
