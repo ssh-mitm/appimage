@@ -16,6 +16,9 @@ The [SSH-MITM](https://github.com/ssh-mitm/ssh-mitm) project uses this module to
 An AppImage built with this module bundles a complete Python distribution from [astral-sh/python-build-standalone](https://github.com/astral-sh/python-build-standalone).
 The AppRun script sets up the environment and delegates to `python -m appimage`, which then selects and starts the correct entry point.
 
+> **Already using uv?** Then you already rely on python-build-standalone — it is the exact same source uv uses internally to install and manage Python versions.
+> The Python interpreter bundled in your AppImage comes from the same place as `uv python install`.
+
 The result is a single executable file that:
 - runs the application by default
 - exposes the bundled Python interpreter
@@ -78,6 +81,9 @@ curl -s "https://api.github.com/repos/astral-sh/python-build-standalone/releases
 
 > **Tip:** Set only `PYTHON_MINOR` to switch between Python series (3.11, 3.12, 3.13 …).
 > Pin `RELEASE_DATE` explicitly in the build script for reproducible builds; omit it to always use the latest release.
+
+> **Note:** [uv](https://docs.astral.sh/uv/) uses the same python-build-standalone distributions under the hood.
+> If uv is available on your build machine, you can let it handle the download instead — see [Build script](#4-build-script) for both variants.
 
 ### 2. AppRun script
 
@@ -167,6 +173,48 @@ if [ ! -f build/python.tar.gz ]; then
     curl -L -o build/python.tar.gz "$PYTHON_URL"
 fi
 tar -xf build/python.tar.gz -C build/AppDir
+
+# Install your application and the appimage module
+build/AppDir/python/bin/python3 -m pip install appimage myapp
+
+# Copy AppImage assets
+cp AppRun build/AppDir/
+cp myapp.desktop myapp.png build/AppDir/
+
+# Download appimagetool (cached)
+if [ ! -x build/appimagetool ]; then
+    curl -L -o build/appimagetool "$APPIMAGETOOL_URL"
+    chmod +x build/appimagetool
+fi
+
+mkdir -p dist
+build/appimagetool build/AppDir "dist/myapp-${ARCH}.AppImage"
+```
+
+Alternatively, if [uv](https://docs.astral.sh/uv/) is available, it can replace the Python download steps — uv uses the same python-build-standalone distributions internally:
+
+```bash
+#!/bin/bash
+
+set -e
+
+ARCH=$(uname -m)
+
+# Set the Python minor version — change to 3.12, 3.13, etc. as needed
+PYTHON_MINOR="3.11"
+
+# Install Python via uv (download and caching handled automatically)
+uv python install "$PYTHON_MINOR"
+UV_PYTHON_DIR=$(dirname "$(dirname "$(uv python find "$PYTHON_MINOR")")")
+
+APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${ARCH}.AppImage"
+
+# Prepare AppDir
+rm -rf build/AppDir
+mkdir -p build/AppDir/python
+
+# Copy Python from uv cache into AppDir
+cp -r "$UV_PYTHON_DIR/." build/AppDir/python/
 
 # Install your application and the appimage module
 build/AppDir/python/bin/python3 -m pip install appimage myapp
