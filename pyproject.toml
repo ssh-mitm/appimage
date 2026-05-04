@@ -44,6 +44,15 @@ include = [
     "appimage/**/*.py",
 ]
 
+[tool.hatch.envs.hatch-test]
+dependencies = ["pytest"]
+
+[tool.hatch.envs.hatch-test.scripts]
+run = "pytest{env:HATCH_TEST_ARGS:} {args:tests/}"
+
+[[tool.hatch.envs.hatch-test.matrix]]
+python = ["3.11", "3.12", "3.13", "3.14"]
+
 [tool.hatch.envs.test]
 dependencies = ["pytest"]
 
@@ -77,6 +86,9 @@ check = [
     "mypy appimage",
 ]
 
+[[tool.hatch.envs.lint.matrix]]
+python = ["3.11", "3.12", "3.13", "3.14"]
+
 [tool.flake8]
 ignore = ["E203", "E501", "W503"]
 
@@ -105,7 +117,7 @@ ignore = [
 target-version = ["py311"]
 
 [tool.bumpversion]
-current_version = "1.1.0"
+current_version = "1.1.1"
 
 [[tool.bumpversion.files]]
 filename = "appimage/__init__.py"

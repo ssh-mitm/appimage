@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-04
+
+### Fixed
+
+- Fixed `Path.readlink()` false positive (`assignment-from-no-return`) reported by pylint under Python 3.14
+
+### Changed
+
+- Added Python version matrix to hatch `test` and `lint` environments (3.11–3.14)
+- Migrated CI test step from `hatch run test:run` to `hatch test`
+
 ## [1.1.0] - 2026-05-04
 
 ### Changed
@@ -31,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release on pypi.org
 
-[Unreleased]: https://github.com/ssh-mitm/appimage/compare/1.1.0...main
+[Unreleased]: https://github.com/ssh-mitm/appimage/compare/1.1.1...main
+[1.1.1]: https://github.com/ssh-mitm/appimage/compare/1.1.0...1.1.1
 [1.1.0]: https://github.com/ssh-mitm/appimage/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/ssh-mitm/appimage/compare/0.0.0...1.0.0
 [0.0.0]: https://github.com/ssh-mitm/appimage/releases/tag/0.0.0

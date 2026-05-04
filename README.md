@@ -219,6 +219,41 @@ This makes all packages bundled in the AppImage available in the virtual environ
 When invoked through a virtual environment symlink, the `appimage` module automatically activates the correct environment so that packages installed into it take precedence.
 
 
+## Development
+
+### Prerequisites
+
+Install the required Python versions and hatch:
+
+```sh
+uv python install 3.11 3.12 3.13 3.14
+pip install hatch
+```
+
+### Running tests
+
+```sh
+# All supported Python versions
+hatch test --all
+
+# Single version
+hatch test --python 3.13
+
+# Specific test
+hatch test -- -k test_appstarter
+```
+
+### Linting
+
+```sh
+# All supported Python versions
+hatch env run -e lint check
+
+# Single version
+hatch run +py=3.13 lint:check
+```
+
+
 ## Accessing the bundled Python
 
 ```sh

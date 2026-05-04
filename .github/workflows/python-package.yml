@@ -28,4 +28,4 @@ jobs:
     - name: Lint source code
       run: hatch run lint:check
     - name: Run tests
-      run: hatch run test:run
+      run: hatch test

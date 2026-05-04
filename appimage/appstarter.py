@@ -525,6 +525,7 @@ class AppStarter:
                 self._activate_venv(str(venv_dir))
                 break
 
+            # pylint: disable-next=assignment-from-no-return
             raw_link = symlink_path.readlink()
             if not raw_link.is_absolute():
                 raw_link = symlink_path.parent / raw_link
