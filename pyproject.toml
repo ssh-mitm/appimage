@@ -105,7 +105,7 @@ ignore = [
 target-version = ["py311"]
 
 [tool.bumpversion]
-current_version = "1.0.0"
+current_version = "1.1.0"
 
 [[tool.bumpversion.files]]
 filename = "appimage/__init__.py"
