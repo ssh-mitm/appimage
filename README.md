@@ -265,8 +265,15 @@ All `--python-*` options are handled by the `appimage` module before your applic
 | `--python-help` | Show available `--python-*` options and exit. |
 | `--python-main ENTRY_POINT` | Set the default entry point to start. Used in AppRun. |
 | `--python-interpreter` | Start the bundled Python interpreter interactively. |
-| `--python-venv DIR [DIR ...]` | Create a virtual environment pointing to the AppImage's Python. |
 | `--python-entry-point EP` | Run a specific console script or `module:function` entry point. |
+
+Virtual environments are created via the standard `python -m venv` interface:
+
+```sh
+./myapp-x86_64.AppImage --python-interpreter -m venv ENV_DIR [options]
+```
+
+All standard `python -m venv` options are supported: `--system-site-packages`, `--clear`, `--upgrade`, `--prompt`, `--without-scm-ignore-files`.
 
 Any argument not starting with `--python-` is passed through unchanged to the application.
 
@@ -278,7 +285,7 @@ This makes all packages bundled in the AppImage available in the virtual environ
 
 ```sh
 # Create the virtual environment
-./myapp-x86_64.AppImage --python-venv ~/.venv/myapp
+./myapp-x86_64.AppImage --python-interpreter -m venv ~/.venv/myapp
 
 # Install additional packages
 ~/.venv/myapp/bin/pip install extra-package

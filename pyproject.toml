@@ -101,6 +101,9 @@ disable = [
     "line-too-long",
 ]
 
+[tool.pylint.design]
+max-args = 7
+
 [tool.pylint.MASTER]
 load-plugins = "pylint.extensions.docparams"
 
@@ -111,6 +114,9 @@ ignore = [
     "D213",    # multi-line-summary-second-line
     "E501",    # Line too long
 ]
+
+[tool.ruff.lint.pylint]
+max-args = 7
 
 [tool.black]
 target-version = ["py311"]

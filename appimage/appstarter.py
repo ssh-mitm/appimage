@@ -13,7 +13,7 @@ Command Line Usage:
 
     ./<appimage> --python-help
     ./<appimage> --python-interpreter
-    ./<appimage> --python-venv <PYTHON_VENV_DIR>
+    ./<appimage> --python-interpreter -m venv <VENV_DIR>
     ./<appimage> --python-entry-point <PYTHON_ENTRY_POINT>
 
 Arguments:
@@ -21,9 +21,10 @@ Arguments:
 - **default_entry_point**: The entry point to start the application.
 - **--python-help**: Show help message and exit.
 - **--python-interpreter**: Start the Python interpreter.
-- **--python-venv <PYTHON_VENV_DIR>**: Create a virtual environment in the specified directory
-  (PYTHON_VENV_DIR) that points to the Python installation within the AppImage. This is helpful
-  for setting up an isolated environment where all Python packages from the AppImage are available.
+- **--python-interpreter -m venv <VENV_DIR>**: Create a virtual environment in the specified
+  directory that points to the Python installation within the AppImage. Supports all standard
+  ``python -m venv`` options (``--system-site-packages``, ``--clear``, ``--upgrade``,
+  ``--prompt``, ``--without-scm-ignore-files``).
 - **--python-entry-point <PYTHON_ENTRY_POINT>**: Execute a specified Python entry point from the
   console scripts (e.g., "ssh-mitm" or "ssmitm.cli:main"). This allows you to run specific
   commands or scripts packaged within the AppImage.
@@ -62,6 +63,7 @@ import os
 import shutil
 import site
 import sys
+import sysconfig
 from functools import cached_property
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
@@ -132,6 +134,56 @@ class _AppImageEnvBuilder(EnvBuilder):
     def setup_python(self, context: "SimpleNamespace") -> None:
         super().setup_python(context)
         patch_appimage_venv(context)
+
+
+def _make_venv_parser() -> argparse.ArgumentParser:
+    """Return a parser for ``python -m venv``-compatible arguments."""
+    parser = argparse.ArgumentParser(
+        description="Creates virtual Python environments in one or more target directories.",
+        epilog="Once an environment has been created, you may wish to activate it, e.g. by "
+        "sourcing an activate script in its bin directory.",
+    )
+    parser.add_argument(
+        "dirs",
+        metavar="ENV_DIR",
+        nargs="+",
+        help="A directory to create the environment in.",
+    )
+    parser.add_argument(
+        "--system-site-packages",
+        default=False,
+        action="store_true",
+        dest="system_site",
+        help="Give the virtual environment access to the system site-packages dir.",
+    )
+    parser.add_argument(
+        "--clear",
+        default=False,
+        action="store_true",
+        dest="clear",
+        help="Delete the contents of the environment directory if it already exists.",
+    )
+    parser.add_argument(
+        "--upgrade",
+        default=False,
+        action="store_true",
+        dest="upgrade",
+        help="Upgrade the environment to use this version of Python.",
+    )
+    parser.add_argument(
+        "--prompt",
+        default=None,
+        dest="prompt",
+        help="Provides an alternative prompt prefix for this environment.",
+    )
+    parser.add_argument(
+        "--without-scm-ignore-files",
+        default=False,
+        action="store_true",
+        dest="without_scm_ignore_files",
+        help="Skips adding SCM ignore files to the environment directory.",
+    )
+    return parser
 
 
 class AppStartExceptionError(Exception):
@@ -290,91 +342,67 @@ class AppStarter:
     def create_venv(
         self,
         *,
-        venv_dirs: str,
+        venv_dirs: list[str],
         system_site_packages: bool = False,
+        clear: bool = False,
+        upgrade: bool = False,
+        prompt: str | None = None,
+        without_scm_ignore_files: bool = False,
     ) -> None:
         """Create a virtual environment in the specified directory.
 
-        This function sets up a virtual environment using Python's built-in `venv` module. It first
-        checks if the `EnvBuilder` class has been patched to modify its behavior. If not, it applies
-        a monkey patch to the `setup_python` method of `EnvBuilder`. The virtual environment is
-        created with system site packages enabled and using symlinks.
-
         Args:
         ----
-            venv_dirs (str): The directories where the virtual environments should be created.
-            system_site_packages (bool): a Boolean value indicating that the system Python site-packages should be available to the environment
+            venv_dirs: The directories where the virtual environments should be created.
+            system_site_packages: Allow access to the system site-packages directory.
+            clear: Delete the environment directory contents before creation.
+            upgrade: Upgrade the environment to use this version of Python.
+            prompt: Alternative prompt prefix for the environment.
+            without_scm_ignore_files: Skip adding SCM ignore files (e.g. .gitignore).
 
         """
-        builder = _AppImageEnvBuilder(
-            system_site_packages=system_site_packages,
-            symlinks=True,
-        )
+        if sys.version_info >= (3, 13):
+            builder = _AppImageEnvBuilder(  # pylint: disable=unexpected-keyword-arg
+                system_site_packages=system_site_packages,
+                symlinks=True,
+                clear=clear,
+                upgrade=upgrade,
+                prompt=prompt,
+                scm_ignore_files=frozenset() if without_scm_ignore_files else frozenset({"git"}),
+            )
+        else:
+            builder = _AppImageEnvBuilder(
+                system_site_packages=system_site_packages,
+                symlinks=True,
+                clear=clear,
+                upgrade=upgrade,
+                prompt=prompt,
+            )
         for venv_dir in venv_dirs:
             builder.create(venv_dir)
         sys.exit()
 
     def parse_venv_command(self) -> None:
-        """Parse command-line arguments for creating virtual Python environments.
+        """Intercept ``python3 -m venv`` invocations and delegate to :meth:`create_venv`.
 
-        This method sets up an argparse.ArgumentParser to handle arguments related
-        to the creation of virtual environments. It includes options for specifying
-        target directories and whether to include system site-packages. The method
-        also checks for the presence of the '-m venv' command in the arguments.
-
-        The recognized arguments are:
-        - ENV_DIR: One or more directories where the virtual environments will be created.
-        - --system-site-packages: A flag to allow the virtual environment to access the
-        system's site-packages directory.
-        - -m: A hidden argument used to detect if the 'venv' module is being invoked.
-
-        If the '-m venv' command is found, the method proceeds to parse the arguments
-        and calls `self.create_venv` with the specified directories and options.
+        Detects ``-m venv`` in ``sys.argv`` and, if found, strips those tokens and
+        parses the remaining arguments with all standard ``python -m venv`` options.
         """
-        parser = argparse.ArgumentParser(
-            prog=__name__,
-            description="Creates virtual Python "
-            "environments in one or "
-            "more target "
-            "directories.",
-            epilog="Once an environment has been "
-            "created, you may wish to "
-            "activate it, e.g. by "
-            "sourcing an activate script "
-            "in its bin directory.",
-        )
-        parser.add_argument(
-            "dirs",
-            metavar="ENV_DIR",
-            nargs="+",
-            help="A directory to create the environment in.",
-        )
-        parser.add_argument(
-            "--system-site-packages",
-            default=False,
-            action="store_true",
-            dest="system_site",
-            help="Give the virtual environment access to the "
-            "system site-packages dir.",
-        )
-        parser.add_argument(
-            "-m",
-            dest="python_module",
-            help=argparse.SUPPRESS,
-        )
-        venv_found = False
         try:
             index = sys.argv.index("-m")
-            if sys.argv[index + 1] == "venv":
-                venv_found = True
+            if sys.argv[index + 1] != "venv":
+                return
         except (ValueError, IndexError):
-            pass
-        if not venv_found:
             return
-        args = parser.parse_args(sys.argv[1:])
+        remaining = sys.argv[1:index] + sys.argv[index + 2 :]
+        args = _make_venv_parser().parse_args(remaining)
         self.create_venv(
             venv_dirs=args.dirs,
             system_site_packages=args.system_site,
+            clear=args.clear,
+            upgrade=args.upgrade,
+            prompt=args.prompt,
+            without_scm_ignore_files=args.without_scm_ignore_files,
         )
 
     def parse_python_args(self) -> None:
@@ -411,14 +439,6 @@ class AppStarter:
             help="start the python interpreter",
         )
         group.add_argument(
-            "--python-venv",
-            dest="python_venv_dirs",
-            metavar="ENV_DIR",
-            nargs="+",
-            help="Creates a virtual environment pointing to the AppImage.\n"
-            "Shortcut for '--python-interpreter -m venv ENV_DIR --system-site-packages'.",
-        )
-        group.add_argument(
             "--python-entry-point",
             dest="python_entry_point",
             metavar="ENTRY_POINT",
@@ -437,10 +457,24 @@ class AppStarter:
         self.default_ep = args.default_entry_point
         sys.argv = self.subprocess_args = sys.argv[:1] + subprocess_args
         if args.python_interpreter:
-            self.parse_venv_command()
+            try:
+                m_idx = subprocess_args.index("-m")
+                if subprocess_args[m_idx + 1] == "venv":
+                    venv_remaining = (
+                        subprocess_args[:m_idx] + subprocess_args[m_idx + 2 :]
+                    )
+                    venv_args = _make_venv_parser().parse_args(venv_remaining)
+                    self.create_venv(
+                        venv_dirs=venv_args.dirs,
+                        system_site_packages=venv_args.system_site,
+                        clear=venv_args.clear,
+                        upgrade=venv_args.upgrade,
+                        prompt=venv_args.prompt,
+                        without_scm_ignore_files=venv_args.without_scm_ignore_files,
+                    )
+            except (ValueError, IndexError):
+                pass
             self.start_interpreter()
-        if args.python_venv_dirs:
-            self.create_venv(venv_dirs=args.python_venv_dirs)
         if args.python_entry_point:
             self.env_ep = args.python_entry_point
 
@@ -520,6 +554,7 @@ class AppStarter:
     def _activate_venv(self, venv_dir: str) -> None:
         """Configure environment variables to use the given venv directory."""
         os.environ.pop("PYTHONNOUSERSITE", None)
+        os.environ["VIRTUAL_ENV"] = venv_dir
         os.environ["PYTHONUSERBASE"] = venv_dir
         os.environ["PATH"] = f"{venv_dir}/bin:{os.environ['PATH']}"
         site.USER_BASE = venv_dir
@@ -530,6 +565,11 @@ class AppStarter:
             / "site-packages",
         )
         sys.path.insert(0, site.USER_SITE)
+        sys.prefix = venv_dir
+        sys.exec_prefix = venv_dir
+        config_vars = sysconfig.get_config_vars()
+        config_vars["base"] = venv_dir
+        config_vars["platbase"] = venv_dir
 
 
 def start_entry_point() -> None:

@@ -15,6 +15,7 @@ from appimage.appstarter import (
     AppStarter,
     InvalidEntryPointError,
     _AppImageEnvBuilder,
+    _make_venv_parser,
     get_entry_points,
     patch_appimage_venv,
     start_entry_point,
@@ -68,6 +69,48 @@ def restore_sys_executable():
     yield
     sys.executable = original
 
+
+@pytest.fixture()
+def restore_sys_prefix():
+    import sysconfig
+    prefix, exec_prefix = sys.prefix, sys.exec_prefix
+    config_vars = sysconfig.get_config_vars()
+    base, platbase = config_vars.get("base"), config_vars.get("platbase")
+    yield
+    sys.prefix = prefix
+    sys.exec_prefix = exec_prefix
+    config_vars["base"] = base
+    config_vars["platbase"] = platbase
+
+
+
+# ---------------------------------------------------------------------------
+# _make_venv_parser
+# ---------------------------------------------------------------------------
+
+class TestMakeVenvParser:
+    def test_parses_dirs(self):
+        args = _make_venv_parser().parse_args(["/env1", "/env2"])
+        assert args.dirs == ["/env1", "/env2"]
+
+    def test_defaults(self):
+        args = _make_venv_parser().parse_args(["/env"])
+        assert args.system_site is False
+        assert args.clear is False
+        assert args.upgrade is False
+        assert args.prompt is None
+        assert args.without_scm_ignore_files is False
+
+    def test_all_flags(self):
+        args = _make_venv_parser().parse_args([
+            "--system-site-packages", "--clear", "--upgrade",
+            "--prompt", "myenv", "--without-scm-ignore-files", "/env",
+        ])
+        assert args.system_site is True
+        assert args.clear is True
+        assert args.upgrade is True
+        assert args.prompt == "myenv"
+        assert args.without_scm_ignore_files is True
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +475,8 @@ class TestCreateVenv:
             MockCls.return_value = MagicMock()
             with pytest.raises(SystemExit):
                 s.create_venv(venv_dirs=["/venv"], system_site_packages=True)
-        MockCls.assert_called_once_with(system_site_packages=True, symlinks=True)
+        _, kwargs = MockCls.call_args
+        assert kwargs["system_site_packages"] is True
 
     def test_uses_symlinks(self):
         s = make_starter()
@@ -442,6 +486,53 @@ class TestCreateVenv:
                 s.create_venv(venv_dirs=["/venv"])
         _, kwargs = MockCls.call_args
         assert kwargs.get("symlinks") is True
+
+    def test_passes_clear_to_builder(self):
+        s = make_starter()
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
+            MockCls.return_value = MagicMock()
+            with pytest.raises(SystemExit):
+                s.create_venv(venv_dirs=["/venv"], clear=True)
+        _, kwargs = MockCls.call_args
+        assert kwargs["clear"] is True
+
+    def test_passes_upgrade_to_builder(self):
+        s = make_starter()
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
+            MockCls.return_value = MagicMock()
+            with pytest.raises(SystemExit):
+                s.create_venv(venv_dirs=["/venv"], upgrade=True)
+        _, kwargs = MockCls.call_args
+        assert kwargs["upgrade"] is True
+
+    def test_passes_prompt_to_builder(self):
+        s = make_starter()
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
+            MockCls.return_value = MagicMock()
+            with pytest.raises(SystemExit):
+                s.create_venv(venv_dirs=["/venv"], prompt="myenv")
+        _, kwargs = MockCls.call_args
+        assert kwargs["prompt"] == "myenv"
+
+    @pytest.mark.skipif(sys.version_info < (3, 13), reason="scm_ignore_files requires Python 3.13+")
+    def test_scm_ignore_files_default_on_313(self):
+        s = make_starter()
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
+            MockCls.return_value = MagicMock()
+            with pytest.raises(SystemExit):
+                s.create_venv(venv_dirs=["/venv"])
+        _, kwargs = MockCls.call_args
+        assert kwargs["scm_ignore_files"] == frozenset({"git"})
+
+    @pytest.mark.skipif(sys.version_info < (3, 13), reason="scm_ignore_files requires Python 3.13+")
+    def test_without_scm_ignore_files_on_313(self):
+        s = make_starter()
+        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
+            MockCls.return_value = MagicMock()
+            with pytest.raises(SystemExit):
+                s.create_venv(venv_dirs=["/venv"], without_scm_ignore_files=True)
+        _, kwargs = MockCls.call_args
+        assert kwargs["scm_ignore_files"] == frozenset()
 
     def test_uses_appimage_env_builder(self):
         s = make_starter()
@@ -476,21 +567,70 @@ class TestParseVenvCommand:
         with patch.object(sys, "argv", ["/python", "-m", "venv", "/myenv"]):
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
-        mock_create.assert_called_once_with(venv_dirs=["/myenv"], system_site_packages=False)
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            upgrade=False, prompt=None, without_scm_ignore_files=False,
+        )
 
     def test_passes_system_site_packages_flag(self):
         s = make_starter()
         with patch.object(sys, "argv", ["/python", "-m", "venv", "--system-site-packages", "/myenv"]):
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
-        mock_create.assert_called_once_with(venv_dirs=["/myenv"], system_site_packages=True)
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=True, clear=False,
+            upgrade=False, prompt=None, without_scm_ignore_files=False,
+        )
+
+    def test_passes_clear_flag(self):
+        s = make_starter()
+        with patch.object(sys, "argv", ["/python", "-m", "venv", "--clear", "/myenv"]):
+            with patch.object(s, "create_venv") as mock_create:
+                s.parse_venv_command()
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=False, clear=True,
+            upgrade=False, prompt=None, without_scm_ignore_files=False,
+        )
+
+    def test_passes_upgrade_flag(self):
+        s = make_starter()
+        with patch.object(sys, "argv", ["/python", "-m", "venv", "--upgrade", "/myenv"]):
+            with patch.object(s, "create_venv") as mock_create:
+                s.parse_venv_command()
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            upgrade=True, prompt=None, without_scm_ignore_files=False,
+        )
+
+    def test_passes_prompt(self):
+        s = make_starter()
+        with patch.object(sys, "argv", ["/python", "-m", "venv", "--prompt", "myenv", "/myenv"]):
+            with patch.object(s, "create_venv") as mock_create:
+                s.parse_venv_command()
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            upgrade=False, prompt="myenv", without_scm_ignore_files=False,
+        )
+
+    def test_passes_without_scm_ignore_files_flag(self):
+        s = make_starter()
+        with patch.object(sys, "argv", ["/python", "-m", "venv", "--without-scm-ignore-files", "/myenv"]):
+            with patch.object(s, "create_venv") as mock_create:
+                s.parse_venv_command()
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            upgrade=False, prompt=None, without_scm_ignore_files=True,
+        )
 
     def test_handles_multiple_venv_dirs(self):
         s = make_starter()
         with patch.object(sys, "argv", ["/python", "-m", "venv", "/env1", "/env2"]):
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
-        mock_create.assert_called_once_with(venv_dirs=["/env1", "/env2"], system_site_packages=False)
+        mock_create.assert_called_once_with(
+            venv_dirs=["/env1", "/env2"], system_site_packages=False, clear=False,
+            upgrade=False, prompt=None, without_scm_ignore_files=False,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -506,12 +646,30 @@ class TestParsePythonArgs:
                     s.parse_python_args()
         mock_interp.assert_called_once()
 
-    def test_python_venv_flag_creates_venv(self):
+    def test_interpreter_m_venv_creates_venv(self):
         s = make_starter(argv0="ssh-mitm")
-        with patch.object(sys, "argv", ["/python", "--python-venv", "/myenv"]):
+        with patch.object(sys, "argv", ["/python", "--python-interpreter", "-m", "venv", "/myenv"]):
             with patch.object(s, "create_venv") as mock_create:
-                s.parse_python_args()
-        mock_create.assert_called_once_with(venv_dirs=["/myenv"])
+                with patch.object(s, "start_interpreter"):
+                    s.parse_python_args()
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            upgrade=False, prompt=None, without_scm_ignore_files=False,
+        )
+
+    def test_interpreter_m_venv_passes_all_options(self):
+        s = make_starter(argv0="ssh-mitm")
+        argv = ["/python", "--python-interpreter", "-m", "venv",
+                "--system-site-packages", "--clear", "--upgrade", "--prompt", "myenv",
+                "--without-scm-ignore-files", "/myenv"]
+        with patch.object(sys, "argv", argv):
+            with patch.object(s, "create_venv") as mock_create:
+                with patch.object(s, "start_interpreter"):
+                    s.parse_python_args()
+        mock_create.assert_called_once_with(
+            venv_dirs=["/myenv"], system_site_packages=True, clear=True,
+            upgrade=True, prompt="myenv", without_scm_ignore_files=True,
+        )
 
     def test_python_entry_point_sets_env_ep(self):
         s = make_starter(argv0="ssh-mitm")
@@ -636,6 +794,27 @@ class TestActivateVenv:
             s._activate_venv("/my/venv")
         expected = f"/my/venv/lib/python{sys.version_info[0]}.{sys.version_info[1]}/site-packages"
         assert sys.path[0] == expected
+
+    def test_sets_virtual_env(self):
+        s = make_starter()
+        with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+            s._activate_venv("/my/venv")
+            assert os.environ["VIRTUAL_ENV"] == "/my/venv"
+
+    def test_sets_sys_prefix(self, restore_sys_prefix):
+        s = make_starter()
+        with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+            s._activate_venv("/my/venv")
+            assert sys.prefix == "/my/venv"
+            assert sys.exec_prefix == "/my/venv"
+
+    def test_prefix_differs_from_base_prefix(self, restore_sys_prefix):
+        s = make_starter()
+        base = sys.base_prefix
+        with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+            s._activate_venv("/my/venv")
+            assert sys.prefix != base
+            assert sys.base_prefix == base
 
 
 # ---------------------------------------------------------------------------
