@@ -42,6 +42,7 @@ def make_starter(**kw) -> AppStarter:
     s.argv0 = kw.get("argv0")
     s.env_ep = kw.get("env_ep")
     s.virtual_env = kw.get("virtual_env")
+    s.debug = kw.get("debug", False)
     return s
 
 
@@ -287,6 +288,18 @@ class TestAppStarterInit:
             s = AppStarter()
         assert s.argv0 == "ssh-mitm"
         assert "/" not in s.argv0
+
+    def test_debug_false_by_default(self):
+        with patch.object(sys, "argv", ["/python"]):
+            with patch.dict(os.environ, {}, clear=True):
+                s = AppStarter()
+        assert s.debug is False
+
+    def test_debug_true_when_flag_in_argv(self):
+        with patch.object(sys, "argv", ["/python", "--python-appimage-debug"]):
+            with patch.dict(os.environ, {}, clear=True):
+                s = AppStarter()
+        assert s.debug is True
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +714,46 @@ class TestParsePythonArgs:
         assert "--python-main" not in s.subprocess_args
         assert "ssh-mitm" not in s.subprocess_args
 
+    def test_python_debug_flag_is_consumed_and_not_in_subprocess_args(self):
+        s = make_starter(argv0="ssh-mitm")
+        with patch.object(sys, "argv", ["/python", "--python-main", "ssh-mitm", "--python-appimage-debug"]):
+            s.parse_python_args()
+        assert "--python-appimage-debug" not in (s.subprocess_args or [])
+
+    def test_python_list_entry_points_prints_and_exits(self, capsys):
+        ep1 = make_ep("tool1", "pkg.mod:func1")
+        ep2 = make_ep("tool2", "pkg.mod:func2")
+        s = make_starter(argv0="app")
+        with patch.object(sys, "argv", ["/python", "--python-list-entry-points"]):
+            with patch("appimage.appstarter.get_entry_points", return_value=[ep1, ep2]):
+                with pytest.raises(SystemExit) as exc:
+                    s.parse_python_args()
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "tool1 = pkg.mod:func1" in out
+        assert "tool2 = pkg.mod:func2" in out
+
+    def test_python_list_entry_points_empty(self, capsys):
+        s = make_starter(argv0="app")
+        with patch.object(sys, "argv", ["/python", "--python-list-entry-points"]):
+            with patch("appimage.appstarter.get_entry_points", return_value=[]):
+                with pytest.raises(SystemExit) as exc:
+                    s.parse_python_args()
+        assert exc.value.code == 0
+        assert capsys.readouterr().out == ""
+
+    def test_python_list_entry_points_mutually_exclusive_with_interpreter(self):
+        s = make_starter(argv0="app")
+        with patch.object(sys, "argv", ["/python", "--python-list-entry-points", "--python-interpreter"]):
+            with pytest.raises(SystemExit):
+                s.parse_python_args()
+
+    def test_python_list_entry_points_mutually_exclusive_with_entry_point(self):
+        s = make_starter(argv0="app")
+        with patch.object(sys, "argv", ["/python", "--python-list-entry-points", "--python-entry-point", "tool"]):
+            with pytest.raises(SystemExit):
+                s.parse_python_args()
+
 
 # ---------------------------------------------------------------------------
 # AppStarter.start
@@ -937,6 +990,18 @@ class TestSetupVirtualenv:
                                 with patch.object(s, "_activate_venv") as mock_activate:
                                     s.setup_virtualenv()
         mock_activate.assert_not_called()
+
+    def test_symlink_depth_limit_prints_warning(self, capsys):
+        s = make_starter(appimage=self.APPIMAGE, argv0="ssh-mitm")
+        cmd = "/venv/bin/ssh-mitm"
+        with patch.dict(os.environ, {"ARGV0": cmd}, clear=True):
+            with patch.object(Path, "is_symlink", return_value=True):
+                with patch.object(Path, "is_file", return_value=False):
+                    with patch("os.path.realpath", return_value="/other"):
+                        with patch.object(Path, "readlink", new=lambda self: Path("python3")):
+                            with patch.object(Path, "resolve", new=lambda self, strict=False: self):
+                                s.setup_virtualenv()
+        assert "depth limit" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

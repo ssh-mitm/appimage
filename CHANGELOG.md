@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--python-list-entry-points`: lists all available console script entry points (`name = module:function`) and exits
+- `--python-appimage-debug`: prints startup debug information to stderr (venv detection, symlink traversal, entry point resolution, interpreter invocation)
 - Virtual environment creation now uses the native `python -m venv` interface via `--python-interpreter -m venv ENV_DIR [options]`
 - All standard `python -m venv` options are now supported: `--system-site-packages`, `--clear`, `--upgrade`, `--prompt`, `--without-scm-ignore-files`
 - Python 3.13+: `scm_ignore_files` is now passed to `EnvBuilder` so `.gitignore` generation can be controlled via `--without-scm-ignore-files`
@@ -16,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Extracted symlink traversal loop from `setup_virtualenv` into `_find_venv_dir_from_symlink` to reduce method complexity
+- Removed duplicate venv-parsing logic in `parse_python_args`; now delegates to `parse_venv_command`
 - Replaced monkey-patching of `EnvBuilder.setup_python` with a proper `_AppImageEnvBuilder` subclass
 - Black formatting check now runs only once (Python 3.11) in CI instead of once per matrix version
 - CI lint step now uses `hatch run +py=<version> lint:check` to avoid running the full matrix per job
@@ -23,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exception handling in `parse_venv_command` is now narrowed: `ValueError` is caught only for the `.index()` call, preventing unrelated errors from being silently swallowed
+- Symlink depth limit in `setup_virtualenv` now emits a warning to stderr when exceeded instead of failing silently
 - Fixed infinite loop in `setup_virtualenv` when following circular symlinks (depth limit: 20 hops)
 - Fixed symlink traversal bug in `setup_virtualenv` where `Path.resolve()` prevented the loop from ever executing
 - Fixed incorrect Python path in module docstring (`opt/python3.11/bin/python3.11` → `python/bin/python3`)

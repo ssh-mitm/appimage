@@ -12,6 +12,8 @@ Command Line Usage:
 -------------------
 
     ./<appimage> --python-help
+    ./<appimage> --python-appimage-debug
+    ./<appimage> --python-list-entry-points
     ./<appimage> --python-interpreter
     ./<appimage> --python-interpreter -m venv <VENV_DIR>
     ./<appimage> --python-entry-point <PYTHON_ENTRY_POINT>
@@ -20,6 +22,8 @@ Arguments:
 ---------
 - **default_entry_point**: The entry point to start the application.
 - **--python-help**: Show help message and exit.
+- **--python-appimage-debug**: Print debug information to stderr during startup.
+- **--python-list-entry-points**: List all available console script entry points and exit.
 - **--python-interpreter**: Start the Python interpreter.
 - **--python-interpreter -m venv <VENV_DIR>**: Create a virtual environment in the specified
   directory that points to the Python installation within the AppImage. Supported options:
@@ -247,6 +251,11 @@ class AppStarter:
         self.argv0 = Path(argv0_complete).name if argv0_complete else None
         self.env_ep = os.environ.get("APP_ENTRY_POINT")
         self.virtual_env = os.environ.get("VIRTUAL_ENV")
+        self.debug: bool = "--python-appimage-debug" in sys.argv
+
+    def _debug(self, msg: str) -> None:
+        if self.debug:
+            sys.stderr.write(f"[appimage debug] {msg}\n")
 
     @cached_property
     def python_path(self) -> str:
@@ -314,15 +323,19 @@ class AppStarter:
 
         """
         if self.env_ep and self.env_ep in self.entry_points:
+            self._debug(f"get_entry_point: {self.env_ep!r} via APP_ENTRY_POINT")
             return self.entry_points[self.env_ep]
         if self.argv0 and self.argv0 in self.entry_points:
+            self._debug(f"get_entry_point: {self.argv0!r} via argv0")
             return self.entry_points[self.argv0]
         if (
             not ignore_default
             and self.default_ep
             and self.default_ep in self.entry_points
         ):
+            self._debug(f"get_entry_point: {self.default_ep!r} via --python-main")
             return self.entry_points[self.default_ep]
+        self._debug("get_entry_point: no matching entry point found")
         return None
 
     def start_entry_point(self) -> None:
@@ -339,6 +352,7 @@ class AppStarter:
             sys.executable = str(Path(self.virtual_env) / "bin/python3")
         entry_point = self.get_entry_point()
         if entry_point:
+            self._debug(f"start_entry_point: loading {entry_point.name!r} ({entry_point.value!r})")
             entry_point_loaded = entry_point.load()
             sys.exit(entry_point_loaded())
 
@@ -353,6 +367,7 @@ class AppStarter:
         args = [self.python_path, "-P"]
         if self.subprocess_args and len(self.subprocess_args) > 1:
             args.extend(self.subprocess_args[1:])
+        self._debug(f"start_interpreter: exec {args!r}")
         os.execvp(  # nosec # noqa: S606 # Starting a process without a shell
             self.python_path,
             args,
@@ -378,6 +393,7 @@ class AppStarter:
             without_scm_ignore_files: Skip adding SCM ignore files (e.g. .gitignore).
 
         """
+        self._debug(f"create_venv: dirs={venv_dirs!r} clear={clear} upgrade={upgrade}")
         if sys.version_info >= (3, 13):
             builder = _AppImageEnvBuilder(  # pylint: disable=unexpected-keyword-arg
                 symlinks=True,
@@ -405,9 +421,9 @@ class AppStarter:
         """
         try:
             index = sys.argv.index("-m")
-            if sys.argv[index + 1] != "venv":
-                return
-        except (ValueError, IndexError):
+        except ValueError:
+            return
+        if index + 1 >= len(sys.argv) or sys.argv[index + 1] != "venv":
             return
         remaining = sys.argv[1:index] + sys.argv[index + 2 :]
         args = _make_venv_parser().parse_args(remaining)
@@ -445,6 +461,12 @@ class AppStarter:
             dest="default_entry_point",
             help="entry point to start.",
         )
+        parser.add_argument(
+            "--python-appimage-debug",
+            dest="python_appimage_debug",
+            action="store_true",
+            help="print debug information to stderr during startup",
+        )
         group = parser.add_mutually_exclusive_group()
         group.add_argument(
             "--python-interpreter",
@@ -458,6 +480,12 @@ class AppStarter:
             metavar="ENTRY_POINT",
             help="start a python entry point from console scripts (e.g. ssh-mitm)",
         )
+        group.add_argument(
+            "--python-list-entry-points",
+            dest="list_entry_points",
+            action="store_true",
+            help="list available console script entry points and exit",
+        )
 
         args, subprocess_args = parser.parse_known_args()
         unknown_python_args = [
@@ -468,25 +496,21 @@ class AppStarter:
                 f"{self.argv0}: error: unrecognized python arguments:'{' '.join(unknown_python_args)}'",
             )
 
+        if args.list_entry_points:
+            sys.stdout.writelines(
+                f"{ep.name} = {ep.value}\n"
+                for ep in get_entry_points(group="console_scripts")
+            )
+            sys.exit(0)
+
         self.default_ep = args.default_entry_point
         sys.argv = self.subprocess_args = sys.argv[:1] + subprocess_args
+        self._debug(
+            f"parse_python_args: default_ep={self.default_ep!r} "
+            f"env_ep={self.env_ep!r} subprocess_args={subprocess_args!r}",
+        )
         if args.python_interpreter:
-            try:
-                m_idx = subprocess_args.index("-m")
-                if subprocess_args[m_idx + 1] == "venv":
-                    venv_remaining = (
-                        subprocess_args[:m_idx] + subprocess_args[m_idx + 2 :]
-                    )
-                    venv_args = _make_venv_parser().parse_args(venv_remaining)
-                    self.create_venv(
-                        venv_dirs=venv_args.dirs,
-                        clear=venv_args.clear,
-                        upgrade=venv_args.upgrade,
-                        prompt=venv_args.prompt,
-                        without_scm_ignore_files=getattr(venv_args, "without_scm_ignore_files", False),
-                    )
-            except (ValueError, IndexError):
-                pass
+            self.parse_venv_command()
             self.start_interpreter()
         if args.python_entry_point:
             self.env_ep = args.python_entry_point
@@ -520,11 +544,17 @@ class AppStarter:
         to invoke the AppImage is itself a symlink inside a venv that points back to this
         AppImage, and activates that venv.
         """
+        self._debug(
+            f"setup_virtualenv: VIRTUAL_ENV={os.environ.get('VIRTUAL_ENV')!r} "
+            f"appimage={self.appimage!r}",
+        )
         if "VIRTUAL_ENV" in os.environ:
             resolved_python3 = os.path.realpath(
                 str(Path(os.environ["VIRTUAL_ENV"]) / "bin" / "python3"),
             )
+            self._debug(f"setup_virtualenv: resolved python3 → {resolved_python3!r}")
             if resolved_python3 == self.appimage:
+                self._debug("setup_virtualenv: activating via VIRTUAL_ENV")
                 self._activate_venv(os.environ["VIRTUAL_ENV"])
                 return
 
@@ -540,9 +570,22 @@ class AppStarter:
         if not Path(cmd_path).is_symlink():
             return
 
+        venv_dir = self._find_venv_dir_from_symlink(cmd_path)
+        if venv_dir:
+            self._debug(f"setup_virtualenv: activating via symlink traversal: {venv_dir}")
+            self._activate_venv(venv_dir)
+
+    def _find_venv_dir_from_symlink(self, cmd_path: str) -> str | None:
+        """Traverse the symlink chain starting at cmd_path to find a venv root.
+
+        Returns the venv directory path if a valid venv pointing to this AppImage is found,
+        or None if the chain ends, no venv is found, or the depth limit is exceeded.
+        """
         symlink_path = Path(cmd_path)
+        depth_limit_reached = True
         for _ in range(20):
             if not symlink_path.is_symlink():
+                depth_limit_reached = False
                 break
             venv_dir = symlink_path.parent.parent
             pyvenv_cfg = venv_dir / "pyvenv.cfg"
@@ -555,17 +598,25 @@ class AppStarter:
                 and python_symlink.is_symlink()
                 and os.path.realpath(str(python_symlink)) == self.appimage
             ):
-                self._activate_venv(str(venv_dir))
-                break
+                return str(venv_dir)
 
+            self._debug(f"_find_venv_dir_from_symlink: following {symlink_path!s}")
             # pylint: disable-next=assignment-from-no-return
             raw_link = symlink_path.readlink()
             if not raw_link.is_absolute():
                 raw_link = symlink_path.parent / raw_link
             symlink_path = raw_link.resolve()
 
+        if depth_limit_reached:
+            sys.stderr.write(
+                f"warning: symlink depth limit (20) exceeded while resolving {cmd_path!r}; "
+                "virtual environment not activated\n",
+            )
+        return None
+
     def _activate_venv(self, venv_dir: str) -> None:
         """Configure environment variables to use the given venv directory."""
+        self._debug(f"_activate_venv: {venv_dir!r}")
         os.environ.pop("PYTHONNOUSERSITE", None)
         os.environ["VIRTUAL_ENV"] = venv_dir
         os.environ["PYTHONUSERBASE"] = venv_dir
