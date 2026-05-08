@@ -123,7 +123,7 @@ max-args = 7
 target-version = ["py311"]
 
 [tool.bumpversion]
-current_version = "1.1.1"
+current_version = "1.2.0"
 
 [[tool.bumpversion.files]]
 filename = "appimage/__init__.py"
