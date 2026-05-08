@@ -267,13 +267,25 @@ All `--python-*` options are handled by the `appimage` module before your applic
 | `--python-interpreter` | Start the bundled Python interpreter interactively. |
 | `--python-entry-point EP` | Run a specific console script or `module:function` entry point. |
 
-Virtual environments are created via the standard `python -m venv` interface:
+Virtual environments are created via the `python -m venv` interface:
 
 ```sh
 ./myapp-x86_64.AppImage --python-interpreter -m venv ENV_DIR [options]
 ```
 
-All standard `python -m venv` options are supported: `--system-site-packages`, `--clear`, `--upgrade`, `--prompt`, `--without-scm-ignore-files`.
+Supported options:
+
+| Option | Description |
+|---|---|
+| `--clear` | Delete the environment directory before creation if it already exists. |
+| `--upgrade` | Update an existing venv after the AppImage has been replaced with a newer version. |
+| `--prompt PROMPT` | Set an alternative shell prompt prefix for the environment. |
+| `--without-scm-ignore-files` | Skip creating `.gitignore` in the venv (Python ≥ 3.13 only). |
+
+> **Note:** `--system-site-packages` has no effect and is not exposed — the AppImage's bundled
+> packages are always accessible regardless, because Python finds them via its compiled-in
+> `sys.prefix` (`APPDIR/python/`), not through the venv's `pyvenv.cfg`.
+> `--copies`, `--upgrade-deps`, `--without-pip`, and `--symlinks` are also not supported.
 
 Any argument not starting with `--python-` is passed through unchanged to the application.
 

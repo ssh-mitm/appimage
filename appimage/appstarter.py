@@ -22,9 +22,11 @@ Arguments:
 - **--python-help**: Show help message and exit.
 - **--python-interpreter**: Start the Python interpreter.
 - **--python-interpreter -m venv <VENV_DIR>**: Create a virtual environment in the specified
-  directory that points to the Python installation within the AppImage. Supports all standard
-  ``python -m venv`` options (``--system-site-packages``, ``--clear``, ``--upgrade``,
-  ``--prompt``, ``--without-scm-ignore-files``).
+  directory that points to the Python installation within the AppImage. Supported options:
+  ``--clear``, ``--upgrade``, ``--prompt``.
+  On Python ≥ 3.13 also: ``--without-scm-ignore-files``.
+  Note: ``--system-site-packages``, ``--copies``, ``--upgrade-deps``, ``--without-pip``, and
+  ``--symlinks`` are not supported in the AppImage context.
 - **--python-entry-point <PYTHON_ENTRY_POINT>**: Execute a specified Python entry point from the
   console scripts (e.g., "ssh-mitm" or "ssmitm.cli:main"). This allows you to run specific
   commands or scripts packaged within the AppImage.
@@ -137,7 +139,29 @@ class _AppImageEnvBuilder(EnvBuilder):
 
 
 def _make_venv_parser() -> argparse.ArgumentParser:
-    """Return a parser for ``python -m venv``-compatible arguments."""
+    """Return a parser for venv creation inside an AppImage.
+
+    Only options that are compatible with the AppImage environment are exposed:
+
+    - ``--clear`` / ``--upgrade``: standard lifecycle operations, work as expected.
+    - ``--prompt``: cosmetic shell-prompt label.
+    - ``--without-scm-ignore-files``: exposed only on Python ≥ 3.13 where EnvBuilder supports it.
+
+    Intentionally excluded options:
+    - ``--system-site-packages``: has no effect in AppImage venvs. Python detects a venv by
+      looking for ``pyvenv.cfg`` one level above ``sys.executable``. Because ``sys.executable``
+      is the AppImage's own Python binary (``APPDIR/python/bin/python3``), Python never finds
+      the venv's ``pyvenv.cfg`` and therefore never reads ``include-system-site-packages``.
+      The AppImage's bundled packages are always accessible via Python's compiled-in
+      ``sys.prefix`` (``APPDIR/python/``), regardless of this flag.
+    - ``--copies``: AppImage venvs require symlinks; ``_AppImageEnvBuilder`` always uses
+      ``symlinks=True`` and ``patch_appimage_venv`` replaces the python3 entry with a symlink
+      to the AppImage regardless.
+    - ``--upgrade-deps``: downloads pip from PyPI, which conflicts with the AppImage's bundled pip.
+    - ``--without-pip``: pip is accessible via the AppImage symlink in the venv's bin; skipping
+      ensurepip would leave the venv in an inconsistent state for tools that inspect site-packages.
+    - ``--symlinks``: always enabled; no need to expose.
+    """
     parser = argparse.ArgumentParser(
         description="Creates virtual Python environments in one or more target directories.",
         epilog="Once an environment has been created, you may wish to activate it, e.g. by "
@@ -148,13 +172,6 @@ def _make_venv_parser() -> argparse.ArgumentParser:
         metavar="ENV_DIR",
         nargs="+",
         help="A directory to create the environment in.",
-    )
-    parser.add_argument(
-        "--system-site-packages",
-        default=False,
-        action="store_true",
-        dest="system_site",
-        help="Give the virtual environment access to the system site-packages dir.",
     )
     parser.add_argument(
         "--clear",
@@ -168,7 +185,8 @@ def _make_venv_parser() -> argparse.ArgumentParser:
         default=False,
         action="store_true",
         dest="upgrade",
-        help="Upgrade the environment to use this version of Python.",
+        help="Upgrade the environment directory to use this version of Python, "
+        "assuming the AppImage has been updated in-place.",
     )
     parser.add_argument(
         "--prompt",
@@ -176,13 +194,14 @@ def _make_venv_parser() -> argparse.ArgumentParser:
         dest="prompt",
         help="Provides an alternative prompt prefix for this environment.",
     )
-    parser.add_argument(
-        "--without-scm-ignore-files",
-        default=False,
-        action="store_true",
-        dest="without_scm_ignore_files",
-        help="Skips adding SCM ignore files to the environment directory.",
-    )
+    if sys.version_info >= (3, 13):
+        parser.add_argument(
+            "--without-scm-ignore-files",
+            default=False,
+            action="store_true",
+            dest="without_scm_ignore_files",
+            help="Skips adding SCM ignore files to the environment directory.",
+        )
     return parser
 
 
@@ -343,7 +362,6 @@ class AppStarter:
         self,
         *,
         venv_dirs: list[str],
-        system_site_packages: bool = False,
         clear: bool = False,
         upgrade: bool = False,
         prompt: str | None = None,
@@ -354,7 +372,6 @@ class AppStarter:
         Args:
         ----
             venv_dirs: The directories where the virtual environments should be created.
-            system_site_packages: Allow access to the system site-packages directory.
             clear: Delete the environment directory contents before creation.
             upgrade: Upgrade the environment to use this version of Python.
             prompt: Alternative prompt prefix for the environment.
@@ -363,7 +380,6 @@ class AppStarter:
         """
         if sys.version_info >= (3, 13):
             builder = _AppImageEnvBuilder(  # pylint: disable=unexpected-keyword-arg
-                system_site_packages=system_site_packages,
                 symlinks=True,
                 clear=clear,
                 upgrade=upgrade,
@@ -372,7 +388,6 @@ class AppStarter:
             )
         else:
             builder = _AppImageEnvBuilder(
-                system_site_packages=system_site_packages,
                 symlinks=True,
                 clear=clear,
                 upgrade=upgrade,
@@ -398,11 +413,10 @@ class AppStarter:
         args = _make_venv_parser().parse_args(remaining)
         self.create_venv(
             venv_dirs=args.dirs,
-            system_site_packages=args.system_site,
             clear=args.clear,
             upgrade=args.upgrade,
             prompt=args.prompt,
-            without_scm_ignore_files=args.without_scm_ignore_files,
+            without_scm_ignore_files=getattr(args, "without_scm_ignore_files", False),
         )
 
     def parse_python_args(self) -> None:
@@ -466,11 +480,10 @@ class AppStarter:
                     venv_args = _make_venv_parser().parse_args(venv_remaining)
                     self.create_venv(
                         venv_dirs=venv_args.dirs,
-                        system_site_packages=venv_args.system_site,
                         clear=venv_args.clear,
                         upgrade=venv_args.upgrade,
                         prompt=venv_args.prompt,
-                        without_scm_ignore_files=venv_args.without_scm_ignore_files,
+                        without_scm_ignore_files=getattr(venv_args, "without_scm_ignore_files", False),
                     )
             except (ValueError, IndexError):
                 pass

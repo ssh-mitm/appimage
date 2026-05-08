@@ -95,22 +95,36 @@ class TestMakeVenvParser:
 
     def test_defaults(self):
         args = _make_venv_parser().parse_args(["/env"])
-        assert args.system_site is False
         assert args.clear is False
         assert args.upgrade is False
         assert args.prompt is None
-        assert args.without_scm_ignore_files is False
+        assert getattr(args, "without_scm_ignore_files", False) is False
 
     def test_all_flags(self):
-        args = _make_venv_parser().parse_args([
-            "--system-site-packages", "--clear", "--upgrade",
-            "--prompt", "myenv", "--without-scm-ignore-files", "/env",
-        ])
-        assert args.system_site is True
+        argv = ["--clear", "--upgrade", "--prompt", "myenv", "/env"]
+        if sys.version_info >= (3, 13):
+            argv.insert(-1, "--without-scm-ignore-files")
+        args = _make_venv_parser().parse_args(argv)
         assert args.clear is True
         assert args.upgrade is True
         assert args.prompt == "myenv"
+        if sys.version_info >= (3, 13):
+            assert args.without_scm_ignore_files is True
+
+    @pytest.mark.skipif(sys.version_info >= (3, 13), reason="option only absent on Python < 3.13")
+    def test_without_scm_ignore_files_not_in_parser_below_313(self):
+        with pytest.raises(SystemExit):
+            _make_venv_parser().parse_args(["--without-scm-ignore-files", "/env"])
+
+    @pytest.mark.skipif(sys.version_info < (3, 13), reason="option only present on Python >= 3.13")
+    def test_without_scm_ignore_files_in_parser_on_313(self):
+        args = _make_venv_parser().parse_args(["--without-scm-ignore-files", "/env"])
         assert args.without_scm_ignore_files is True
+
+    @pytest.mark.parametrize("flag", ["--system-site-packages", "--copies", "--upgrade-deps", "--without-pip", "--symlinks"])
+    def test_unsupported_flags_rejected(self, flag):
+        with pytest.raises(SystemExit):
+            _make_venv_parser().parse_args([flag, "/env"])
 
 
 # ---------------------------------------------------------------------------
@@ -469,15 +483,6 @@ class TestCreateVenv:
             with pytest.raises(SystemExit):
                 s.create_venv(venv_dirs=["/venv"])
 
-    def test_passes_system_site_packages_to_builder(self):
-        s = make_starter()
-        with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
-            MockCls.return_value = MagicMock()
-            with pytest.raises(SystemExit):
-                s.create_venv(venv_dirs=["/venv"], system_site_packages=True)
-        _, kwargs = MockCls.call_args
-        assert kwargs["system_site_packages"] is True
-
     def test_uses_symlinks(self):
         s = make_starter()
         with patch("appimage.appstarter._AppImageEnvBuilder") as MockCls:
@@ -568,17 +573,7 @@ class TestParseVenvCommand:
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
         mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
-            upgrade=False, prompt=None, without_scm_ignore_files=False,
-        )
-
-    def test_passes_system_site_packages_flag(self):
-        s = make_starter()
-        with patch.object(sys, "argv", ["/python", "-m", "venv", "--system-site-packages", "/myenv"]):
-            with patch.object(s, "create_venv") as mock_create:
-                s.parse_venv_command()
-        mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=True, clear=False,
+            venv_dirs=["/myenv"], clear=False,
             upgrade=False, prompt=None, without_scm_ignore_files=False,
         )
 
@@ -588,7 +583,7 @@ class TestParseVenvCommand:
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
         mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=False, clear=True,
+            venv_dirs=["/myenv"], clear=True,
             upgrade=False, prompt=None, without_scm_ignore_files=False,
         )
 
@@ -598,7 +593,7 @@ class TestParseVenvCommand:
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
         mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            venv_dirs=["/myenv"], clear=False,
             upgrade=True, prompt=None, without_scm_ignore_files=False,
         )
 
@@ -608,17 +603,18 @@ class TestParseVenvCommand:
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
         mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            venv_dirs=["/myenv"], clear=False,
             upgrade=False, prompt="myenv", without_scm_ignore_files=False,
         )
 
+    @pytest.mark.skipif(sys.version_info < (3, 13), reason="--without-scm-ignore-files requires Python >= 3.13")
     def test_passes_without_scm_ignore_files_flag(self):
         s = make_starter()
         with patch.object(sys, "argv", ["/python", "-m", "venv", "--without-scm-ignore-files", "/myenv"]):
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
         mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            venv_dirs=["/myenv"], clear=False,
             upgrade=False, prompt=None, without_scm_ignore_files=True,
         )
 
@@ -628,7 +624,7 @@ class TestParseVenvCommand:
             with patch.object(s, "create_venv") as mock_create:
                 s.parse_venv_command()
         mock_create.assert_called_once_with(
-            venv_dirs=["/env1", "/env2"], system_site_packages=False, clear=False,
+            venv_dirs=["/env1", "/env2"], clear=False,
             upgrade=False, prompt=None, without_scm_ignore_files=False,
         )
 
@@ -653,21 +649,22 @@ class TestParsePythonArgs:
                 with patch.object(s, "start_interpreter"):
                     s.parse_python_args()
         mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=False, clear=False,
+            venv_dirs=["/myenv"], clear=False,
             upgrade=False, prompt=None, without_scm_ignore_files=False,
         )
 
+    @pytest.mark.skipif(sys.version_info < (3, 13), reason="--without-scm-ignore-files requires Python >= 3.13")
     def test_interpreter_m_venv_passes_all_options(self):
         s = make_starter(argv0="ssh-mitm")
         argv = ["/python", "--python-interpreter", "-m", "venv",
-                "--system-site-packages", "--clear", "--upgrade", "--prompt", "myenv",
+                "--clear", "--upgrade", "--prompt", "myenv",
                 "--without-scm-ignore-files", "/myenv"]
         with patch.object(sys, "argv", argv):
             with patch.object(s, "create_venv") as mock_create:
                 with patch.object(s, "start_interpreter"):
                     s.parse_python_args()
         mock_create.assert_called_once_with(
-            venv_dirs=["/myenv"], system_site_packages=True, clear=True,
+            venv_dirs=["/myenv"], clear=True,
             upgrade=True, prompt="myenv", without_scm_ignore_files=True,
         )
 
