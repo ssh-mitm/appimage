@@ -78,6 +78,7 @@ dependencies = [
 [tool.hatch.envs.lint.scripts]
 check = [
     "pytest",
+    "black --check appimage",
     "bandit -r appimage",
     "ruff check appimage",
     "flake8 appimage",

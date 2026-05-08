@@ -352,7 +352,9 @@ class AppStarter:
             sys.executable = str(Path(self.virtual_env) / "bin/python3")
         entry_point = self.get_entry_point()
         if entry_point:
-            self._debug(f"start_entry_point: loading {entry_point.name!r} ({entry_point.value!r})")
+            self._debug(
+                f"start_entry_point: loading {entry_point.name!r} ({entry_point.value!r})",
+            )
             entry_point_loaded = entry_point.load()
             sys.exit(entry_point_loaded())
 
@@ -400,7 +402,9 @@ class AppStarter:
                 clear=clear,
                 upgrade=upgrade,
                 prompt=prompt,
-                scm_ignore_files=frozenset() if without_scm_ignore_files else frozenset({"git"}),
+                scm_ignore_files=(
+                    frozenset() if without_scm_ignore_files else frozenset({"git"})
+                ),
             )
         else:
             builder = _AppImageEnvBuilder(
@@ -572,7 +576,9 @@ class AppStarter:
 
         venv_dir = self._find_venv_dir_from_symlink(cmd_path)
         if venv_dir:
-            self._debug(f"setup_virtualenv: activating via symlink traversal: {venv_dir}")
+            self._debug(
+                f"setup_virtualenv: activating via symlink traversal: {venv_dir}",
+            )
             self._activate_venv(venv_dir)
 
     def _find_venv_dir_from_symlink(self, cmd_path: str) -> str | None:
