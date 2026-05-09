@@ -46,6 +46,7 @@ path = "appimage/__init__.py"
 include = [
     "appimage/**/*.py",
     "appimage/assets/*.svg",
+    "appimage/assets/*.png",
 ]
 
 [tool.hatch.envs.hatch-test]

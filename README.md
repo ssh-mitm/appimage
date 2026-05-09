@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/ssh-mitm/appimage/main/appimage/assets/default_icon.png" width="64" height="64" align="left">
+
 # appimage
 
 **The `appimage` module packages Python applications as self-contained AppImages.**
