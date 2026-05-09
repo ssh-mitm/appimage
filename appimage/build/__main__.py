@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-from appimage.build import BuildConfig, build
+from appimage.build import BuildConfig, build, check, write_config
 
 
 def _parse_args() -> argparse.Namespace:
@@ -21,16 +21,29 @@ def _parse_args() -> argparse.Namespace:
         prog="python -m appimage.build",
         description="Build a Python application as a self-contained AppImage.",
     )
+
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Show resolved configuration and exit without building.",
+    )
+    mode.add_argument(
+        "--init",
+        action="store_true",
+        help="Write auto-detected values to pyproject.toml and exit.",
+    )
+
     parser.add_argument(
         "--app",
         metavar="NAME",
-        help="Application name, used as the AppImage filename prefix (overrides pyproject.toml).",
+        help="Application name (overrides pyproject.toml).",
     )
     parser.add_argument(
         "--entry-point",
         dest="entry_point",
         metavar="EP",
-        help="Console script entry point for AppRun (overrides pyproject.toml).",
+        help="Console script entry point (overrides pyproject.toml).",
     )
     parser.add_argument(
         "--python",
@@ -41,14 +54,21 @@ def _parse_args() -> argparse.Namespace:
         "--python-date",
         dest="python_date",
         metavar="DATE",
-        help="python-build-standalone release date for reproducible builds (overrides pyproject.toml).",
+        help="python-build-standalone release date for reproducible builds.",
+    )
+    parser.add_argument(
+        "--extras",
+        dest="extras",
+        action="append",
+        metavar="EXTRA",
+        help="Package extras to install, repeatable (overrides pyproject.toml).",
     )
     parser.add_argument(
         "--package",
         dest="packages",
         action="append",
         metavar="PKG",
-        help="pip install target, repeatable (overrides pyproject.toml).",
+        help="Additional pip install target, repeatable.",
     )
     parser.add_argument(
         "--project-dir",
@@ -69,7 +89,7 @@ def main() -> None:
 
     try:
         config = BuildConfig.from_pyproject(project_root)
-    except (FileNotFoundError, ValueError) as exc:
+    except FileNotFoundError as exc:
         sys.exit(f"Error: {exc}")
 
     if args.app:
@@ -80,13 +100,21 @@ def main() -> None:
         config.python = args.python
     if args.python_date:
         config.python_date = args.python_date
+    if args.extras:
+        config.extras = args.extras
     if args.packages:
         config.packages = args.packages
 
     try:
-        build(config, project_root)
-    except (FileNotFoundError, RuntimeError, OSError) as exc:
-        sys.exit(f"Build failed: {exc}")
+        if args.check:
+            ok = check(config, project_root)
+            sys.exit(0 if ok else 1)
+        elif args.init:
+            write_config(config, project_root)
+        else:
+            build(config, project_root)
+    except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
+        sys.exit(f"Error: {exc}")
 
 
 if __name__ == "__main__":
