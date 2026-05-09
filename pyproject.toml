@@ -29,6 +29,9 @@ classifiers = [
 ]
 requires-python = ">= 3.11"
 
+[project.scripts]
+appimage-build = "appimage.build.__main__:main"
+
 [project.urls]
 Homepage = "https://www.ssh-mitm.at"
 Documentation = "https://appimage.ssh-mitm.at"
@@ -42,6 +45,7 @@ path = "appimage/__init__.py"
 [tool.hatch.build]
 include = [
     "appimage/**/*.py",
+    "appimage/assets/*.svg",
 ]
 
 [tool.hatch.envs.hatch-test]

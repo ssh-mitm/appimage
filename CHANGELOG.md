@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Bundled default icon (AppImage box + Python logo) used as fallback when no project icon is found — build no longer fails without an icon
+- Icon is always copied into the AppDir as `{app}.{ext}`, matching the `Icon={app}` entry in the `.desktop` file
+
+### Changed
+
+- README: unified configuration reference into a single table; restructured into Build, CLI, and Runtime sections; highlighted python-build-standalone / uv shared source
+
 ## [1.2.0] - 2026-05-08
 
 ### Added
