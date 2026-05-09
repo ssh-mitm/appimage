@@ -14,7 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- README: unified configuration reference into a single table; restructured into Build, CLI, and Runtime sections; highlighted python-build-standalone / uv shared source
+- README: restructured with visual header, badges, RTD button; simplified to highlight unique features
+- License changed from GPL v3 to Apache 2.0
+- Project metadata: corrected description, homepage, documentation URL and PyPI classifiers
+
+### Documentation
+
+- Added Sphinx documentation hosted on Read the Docs (sphinx-rtd-theme)
+- Covers Quick Start, Configuration, CLI reference, Runtime, and Changelog
+- CLI reference completed with missing `--app`, `--entry-point`, `--extras` options
+- Added notes on Linux-only support, supported architectures, and automatic appimagetool download
 
 ## [1.2.0] - 2026-05-08
 
