@@ -29,6 +29,14 @@ classifiers = [
 ]
 requires-python = ">= 3.11"
 
+[project.optional-dependencies]
+docs = [
+    "myst-parser",
+    "sphinx",
+    "sphinx-copybutton",
+    "sphinx-rtd-theme",
+]
+
 [project.scripts]
 appimage-build = "appimage.build.__main__:main"
 
@@ -57,6 +65,13 @@ run = "pytest{env:HATCH_TEST_ARGS:} {args:tests/}"
 
 [[tool.hatch.envs.hatch-test.matrix]]
 python = ["3.11", "3.12", "3.13", "3.14"]
+
+[tool.hatch.envs.docs]
+detached = false
+features = ["docs"]
+
+[tool.hatch.envs.docs.scripts]
+build = ["sphinx-build docs build/html"]
 
 [tool.hatch.envs.test]
 dependencies = ["pytest"]
