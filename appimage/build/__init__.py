@@ -6,7 +6,7 @@ import os
 import platform
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import tarfile
 import tomllib
 import urllib.request
@@ -294,6 +294,87 @@ def _find_desktop(app: str, project_root: Path) -> Path | None:
     return None
 
 
+def _resolve_app(config: BuildConfig, project: dict[str, object]) -> tuple[str, str]:
+    """Resolve app name from config or project metadata."""
+    if config.app is not None:
+        return config.app, "[tool.appimage.build]"
+    if project_name := project.get("name"):
+        return str(project_name), "[project] name"
+    msg = (
+        "Cannot determine app name: set 'app' in [tool.appimage.build] "
+        "or 'name' in [project]"
+    )
+    raise ValueError(msg)
+
+
+def _resolve_entry_point(
+    config: BuildConfig,
+    project: dict[str, object],
+    app: str,
+) -> tuple[str, str, list[str]]:
+    """Resolve entry point from config or project.scripts."""
+    if config.entry_point is not None:
+        return config.entry_point, "[tool.appimage.build]", []
+    scripts: dict[str, str] = project.get("scripts", {})  # type: ignore[assignment]
+    ep = _detect_entry_point(scripts, app)
+    if ep is not None:
+        return ep, "[project] scripts", []
+    error = (
+        "Cannot determine entry_point: add it to [tool.appimage.build] "
+        "or define it in [project.scripts]"
+    )
+    return app, "", [error]
+
+
+def _resolve_python(
+    config: BuildConfig,
+    project: dict[str, object],
+) -> tuple[str, str]:
+    """Resolve Python version from config or requires-python."""
+    if config.python is not None:
+        return config.python, "[tool.appimage.build]"
+    if requires := project.get("requires-python"):
+        return _python_from_requires(str(requires)), "[project] requires-python"
+    return "3.11", "default"
+
+
+def _resolve_icon_path(
+    config: BuildConfig,
+    project_root: Path,
+    app: str,
+) -> tuple[Path | None, str, list[str]]:
+    """Resolve icon path from config or filesystem search."""
+    if config.icon is not None:
+        return project_root / config.icon, "[tool.appimage.build]", []
+    icon = _find_icon(app, project_root)
+    if icon is not None:
+        return icon, f"detected ({icon.relative_to(project_root)})", []
+    warning = (
+        f"No icon found — add {app}.png to the project root "
+        f"or set 'icon' in [tool.appimage.build]. "
+        f"Using the built-in default icon."
+    )
+    return _DEFAULT_ICON, "default (bundled)", [warning]
+
+
+def _resolve_desktop_path(
+    config: BuildConfig,
+    project_root: Path,
+    app: str,
+) -> tuple[Path | None, str, list[str]]:
+    """Resolve desktop file path from config or filesystem search."""
+    if config.desktop is not None:
+        return project_root / config.desktop, "[tool.appimage.build]", []
+    desktop = _find_desktop(app, project_root)
+    if desktop is not None:
+        return desktop, f"detected ({desktop.relative_to(project_root)})", []
+    warning = (
+        f"No .desktop file found — one will be generated from [project] metadata. "
+        f"Add {app}.desktop to customise it."
+    )
+    return None, "will be generated", [warning]
+
+
 def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     """Resolve all auto-detected fields into a complete build configuration.
 
@@ -320,86 +401,21 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     pyproject = project_root / "pyproject.toml"
     with pyproject.open("rb") as f:
         data = tomllib.load(f)
-    project: dict[str, object] = data.get("project", {})  # type: ignore[assignment]
+    project: dict[str, object] = data.get("project", {})
 
     sources: dict[str, str] = {}
     warnings: list[str] = []
     errors: list[str] = []
 
-    # app
-    if config.app is not None:
-        app = config.app
-        sources["app"] = "[tool.appimage.build]"
-    elif project_name := project.get("name"):
-        app = str(project_name)
-        sources["app"] = "[project] name"
-    else:
-        raise ValueError(
-            "Cannot determine app name: set 'app' in [tool.appimage.build] "
-            "or 'name' in [project]"
-        )
+    app, sources["app"] = _resolve_app(config, project)
+    entry_point, sources["entry_point"], ep_errors = _resolve_entry_point(config, project, app)
+    errors.extend(ep_errors)
+    python, sources["python"] = _resolve_python(config, project)
+    icon, sources["icon"], icon_warnings = _resolve_icon_path(config, project_root, app)
+    warnings.extend(icon_warnings)
+    desktop, sources["desktop"], desktop_warnings = _resolve_desktop_path(config, project_root, app)
+    warnings.extend(desktop_warnings)
 
-    # entry_point
-    if config.entry_point is not None:
-        entry_point = config.entry_point
-        sources["entry_point"] = "[tool.appimage.build]"
-    else:
-        scripts: dict[str, str] = project.get("scripts", {})  # type: ignore[assignment]
-        ep = _detect_entry_point(scripts, app)
-        if ep is not None:
-            entry_point = ep
-            sources["entry_point"] = "[project] scripts"
-        else:
-            errors.append(
-                "Cannot determine entry_point: add it to [tool.appimage.build] "
-                "or define it in [project.scripts]"
-            )
-            entry_point = app
-
-    # python
-    if config.python is not None:
-        python = config.python
-        sources["python"] = "[tool.appimage.build]"
-    elif requires := project.get("requires-python"):
-        python = _python_from_requires(str(requires))
-        sources["python"] = "[project] requires-python"
-    else:
-        python = "3.11"
-        sources["python"] = "default"
-
-    # icon
-    if config.icon is not None:
-        icon: Path | None = project_root / config.icon
-        sources["icon"] = "[tool.appimage.build]"
-    else:
-        icon = _find_icon(app, project_root)
-        if icon is not None:
-            sources["icon"] = f"detected ({icon.relative_to(project_root)})"
-        else:
-            icon = _DEFAULT_ICON
-            sources["icon"] = "default (bundled)"
-            warnings.append(
-                f"No icon found — add {app}.png to the project root "
-                f"or set 'icon' in [tool.appimage.build]. "
-                f"Using the built-in default icon."
-            )
-
-    # desktop
-    if config.desktop is not None:
-        desktop: Path | None = project_root / config.desktop
-        sources["desktop"] = "[tool.appimage.build]"
-    else:
-        desktop = _find_desktop(app, project_root)
-        if desktop is not None:
-            sources["desktop"] = f"detected ({desktop.relative_to(project_root)})"
-        else:
-            sources["desktop"] = "will be generated"
-            warnings.append(
-                f"No .desktop file found — one will be generated from [project] metadata. "
-                f"Add {app}.desktop to customise it."
-            )
-
-    # install targets
     if config.extras:
         extras_str = ",".join(config.extras)
         base = f".[{extras_str}]"
@@ -623,14 +639,14 @@ def _resolve_python_url(python: str, date: str, arch: str) -> str:
     api_url = f"{_PBS_API}/tags/{date}" if date else f"{_PBS_API}/latest"
     _log.info("Resolving Python %s download URL...", python)
 
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310
         api_url,
         headers={
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urllib.request.urlopen(req) as resp:  # noqa: S310
+    with urllib.request.urlopen(req) as resp:  # noqa: S310  # nosec B310
         release: dict[str, object] = json.loads(resp.read())
 
     assets: list[dict[str, str]] = release.get("assets", [])  # type: ignore[assignment]
@@ -660,7 +676,7 @@ def _download(url: str, dest: Path) -> None:
 
     """
     _log.info("Downloading %s", dest.name)
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
+    with urllib.request.urlopen(url) as resp:  # noqa: S310  # nosec B310
         dest.write_bytes(resp.read())
 
 
@@ -678,7 +694,7 @@ def _generate_apprun(resolved: _ResolvedBuild, dest: Path) -> None:
     env_lines = "\n".join(f'export {k}="{v}"' for k, v in resolved.env.items())
     env_block = (env_lines + "\n") if env_lines else ""
     dest.write_text(
-        _APPRUN_TEMPLATE.format(env_block=env_block, entry_point=resolved.entry_point)
+        _APPRUN_TEMPLATE.format(env_block=env_block, entry_point=resolved.entry_point),
     )
 
 
@@ -697,7 +713,7 @@ def _generate_desktop(resolved: _ResolvedBuild, project_root: Path, dest: Path) 
     """
     with (project_root / "pyproject.toml").open("rb") as f:
         data = tomllib.load(f)
-    project: dict[str, object] = data.get("project", {})  # type: ignore[assignment]
+    project: dict[str, object] = data.get("project", {})
 
     description = str(project.get("description", ""))
     comment_line = f"Comment={description}\n" if description else ""
@@ -708,7 +724,7 @@ def _generate_desktop(resolved: _ResolvedBuild, project_root: Path, dest: Path) 
             name=name,
             comment_line=comment_line,
             app=resolved.app,
-        )
+        ),
     )
 
 
@@ -726,12 +742,77 @@ def _run_hook(script: str, project_root: Path, appdir: Path) -> None:
 
     """
     env = {**os.environ, "APPDIR": str(appdir)}
-    subprocess.run(  # noqa: S603
+    subprocess.run(  # noqa: S603  # nosec B603
         [str(project_root / script)],
         cwd=project_root,
         env=env,
         check=True,
     )
+
+
+def _prepare_python(
+    resolved: _ResolvedBuild,
+    python_cache: Path,
+    appdir: Path,
+    arch: str,
+    project_root: Path,
+) -> None:
+    """Download, extract Python and install packages into AppDir."""
+    if python_cache.exists():
+        _log.info("Using cached python.tar.gz")
+    else:
+        python_url = _resolve_python_url(resolved.python, resolved.python_date, arch)
+        _download(python_url, python_cache)
+
+    _log.info("Extracting Python...")
+    with tarfile.open(python_cache) as tar:
+        tar.extractall(appdir)  # noqa: S202  # nosec B202
+
+    python_bin = appdir / "python" / "bin" / "python3"
+    _log.info("Installing packages: %s", " ".join(resolved.install_targets))
+    subprocess.run(  # noqa: S603  # nosec B603
+        [str(python_bin), "-m", "pip", "install", *resolved.install_targets],
+        cwd=project_root,
+        check=True,
+    )
+
+    if hook := resolved.hooks.get("post_install"):
+        _log.info("Running post_install hook...")
+        _run_hook(hook, project_root, appdir)
+
+
+def _copy_assets(resolved: _ResolvedBuild, project_root: Path, appdir: Path) -> None:
+    """Copy icon, desktop file, and AppRun script into AppDir."""
+    _log.info("Copying assets...")
+    if resolved.icon:
+        shutil.copy2(resolved.icon, appdir / (resolved.app + resolved.icon.suffix))
+    if resolved.desktop:
+        shutil.copy2(resolved.desktop, appdir / resolved.desktop.name)
+    else:
+        _generate_desktop(resolved, project_root, appdir / f"{resolved.app}.desktop")
+
+    apprun_dest = appdir / "AppRun"
+    if resolved.apprun:
+        apprun_src = project_root / resolved.apprun
+        if not apprun_src.exists():
+            msg = f"AppRun not found: {apprun_src}"
+            raise FileNotFoundError(msg)
+        shutil.copy2(apprun_src, apprun_dest)
+    else:
+        _generate_apprun(resolved, apprun_dest)
+    apprun_dest.chmod(0o755)
+
+
+def _copy_extra_files(resolved: _ResolvedBuild, project_root: Path, appdir: Path) -> None:
+    """Copy extra files and directories into AppDir."""
+    for src_str, dst_str in resolved.extra_files.items():
+        src_path = project_root / src_str
+        dst_path = appdir / dst_str
+        if src_path.is_dir():
+            shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+        else:
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
 
 
 def build(config: BuildConfig, project_root: Path) -> None:
@@ -769,56 +850,9 @@ def build(config: BuildConfig, project_root: Path) -> None:
         shutil.rmtree(appdir)
     appdir.mkdir(parents=True)
 
-    if python_cache.exists():
-        _log.info("Using cached python.tar.gz")
-    else:
-        python_url = _resolve_python_url(resolved.python, resolved.python_date, arch)
-        _download(python_url, python_cache)
-
-    _log.info("Extracting Python...")
-    with tarfile.open(python_cache) as tar:
-        tar.extractall(appdir)  # noqa: S202
-
-    python_bin = appdir / "python" / "bin" / "python3"
-
-    _log.info("Installing packages: %s", " ".join(resolved.install_targets))
-    subprocess.run(  # noqa: S603
-        [str(python_bin), "-m", "pip", "install", *resolved.install_targets],
-        cwd=project_root,
-        check=True,
-    )
-
-    if hook := resolved.hooks.get("post_install"):
-        _log.info("Running post_install hook...")
-        _run_hook(hook, project_root, appdir)
-
-    _log.info("Copying assets...")
-    if resolved.icon:
-        shutil.copy2(resolved.icon, appdir / (resolved.app + resolved.icon.suffix))
-    if resolved.desktop:
-        shutil.copy2(resolved.desktop, appdir / resolved.desktop.name)
-    else:
-        _generate_desktop(resolved, project_root, appdir / f"{resolved.app}.desktop")
-
-    apprun_dest = appdir / "AppRun"
-    if resolved.apprun:
-        apprun_src = project_root / resolved.apprun
-        if not apprun_src.exists():
-            msg = f"AppRun not found: {apprun_src}"
-            raise FileNotFoundError(msg)
-        shutil.copy2(apprun_src, apprun_dest)
-    else:
-        _generate_apprun(resolved, apprun_dest)
-    apprun_dest.chmod(0o755)
-
-    for src_str, dst_str in resolved.extra_files.items():
-        src_path = project_root / src_str
-        dst_path = appdir / dst_str
-        if src_path.is_dir():
-            shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
-        else:
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_path, dst_path)
+    _prepare_python(resolved, python_cache, appdir, arch, project_root)
+    _copy_assets(resolved, project_root, appdir)
+    _copy_extra_files(resolved, project_root, appdir)
 
     if hook := resolved.hooks.get("pre_package"):
         _log.info("Running pre_package hook...")
@@ -839,5 +873,5 @@ def build(config: BuildConfig, project_root: Path) -> None:
     cmd += [str(appdir), output_name]
 
     _log.info("Packaging AppImage...")
-    subprocess.run(cmd, cwd=dist_dir, check=True)  # noqa: S603
+    subprocess.run(cmd, cwd=dist_dir, check=True)  # noqa: S603  # nosec B603
     _log.info("Done: %s", dist_dir / output_name)

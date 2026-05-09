@@ -80,18 +80,8 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    """Build an AppImage for the project in the current directory."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-    args = _parse_args()
-    project_root = Path(args.project_dir).resolve()
-
-    try:
-        config = BuildConfig.from_pyproject(project_root)
-    except FileNotFoundError as exc:
-        sys.exit(f"Error: {exc}")
-
+def _apply_cli_overrides(config: BuildConfig, args: argparse.Namespace) -> None:
+    """Apply CLI argument overrides to a BuildConfig."""
     if args.app:
         config.app = args.app
     if args.entry_point:
@@ -104,6 +94,21 @@ def main() -> None:
         config.extras = args.extras
     if args.packages:
         config.packages = args.packages
+
+
+def main() -> None:
+    """Build an AppImage for the project in the current directory."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    args = _parse_args()
+    project_root = Path(args.project_dir).resolve()
+
+    try:
+        config = BuildConfig.from_pyproject(project_root)
+    except FileNotFoundError as exc:
+        sys.exit(f"Error: {exc}")
+
+    _apply_cli_overrides(config, args)
 
     try:
         if args.check:

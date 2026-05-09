@@ -121,10 +121,12 @@ non_interactive = true
 [tool.pylint]
 disable = [
     "line-too-long",
+    "too-many-instance-attributes",
 ]
 
 [tool.pylint.design]
 max-args = 7
+max-locals = 25
 
 [tool.pylint.MASTER]
 load-plugins = "pylint.extensions.docparams"
