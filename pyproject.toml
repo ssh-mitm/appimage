@@ -11,9 +11,9 @@ authors = [
 maintainers = [
   {name = "Manfred Kaiser", email = "manfred.kaiser@ssh-mitm.at"}
 ]
-description = "AppImage start script to convert the python application in full python environment"
+description = "Package Python applications as self-contained AppImages"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = {text = "Apache-2.0"}
 keywords = [
     "appimage",
 ]
@@ -23,8 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-    "Topic :: System :: Networking",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Software Distribution",
     "Development Status :: 5 - Production/Stable",
 ]
 requires-python = ">= 3.11"
@@ -41,8 +42,8 @@ docs = [
 appimage-build = "appimage.build.__main__:main"
 
 [project.urls]
-Homepage = "https://www.ssh-mitm.at"
-Documentation = "https://appimage.ssh-mitm.at"
+Homepage = "https://github.com/ssh-mitm/appimage"
+Documentation = "https://appimage.readthedocs.io"
 Changelog = "https://github.com/ssh-mitm/appimage/blob/main/CHANGELOG.md"
 Source = "https://github.com/ssh-mitm/appimage"
 Tracker = "https://github.com/ssh-mitm/appimage/issues"
