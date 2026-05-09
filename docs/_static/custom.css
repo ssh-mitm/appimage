@@ -2,3 +2,25 @@
     max-width: 128px;
     max-height: 128px;
 }
+
+.github-link {
+    text-align: center;
+    margin: 8px 0 4px;
+}
+
+.github-button {
+    display: inline-block;
+    padding: 6px 16px;
+    background: #24292e;
+    color: #fff !important;
+    border-radius: 4px;
+    text-decoration: none !important;
+    font-size: .85em;
+    font-weight: bold;
+    border: none;
+}
+
+.github-button:hover {
+    background: #586069;
+    color: #fff !important;
+}

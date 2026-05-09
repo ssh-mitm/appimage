@@ -20,8 +20,17 @@ html_theme_options = {
     "navigation_depth": 3,
 }
 
+html_context = {
+    "display_github": True,
+    "github_user": "ssh-mitm",
+    "github_repo": "appimage",
+    "github_version": "main",
+    "conf_py_path": "/docs/",
+}
+
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
+templates_path = ["_templates"]
 html_baseurl = "https://appimage.readthedocs.io/"
 
 master_doc = "index"
