@@ -7,6 +7,7 @@
 configuration
 cli
 runtime
+internals
 changelog
 ```
 
