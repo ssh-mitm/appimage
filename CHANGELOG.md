@@ -11,19 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bundled default icon (AppImage box + Python logo) used as fallback when no project icon is found — build no longer fails without an icon
 - Icon is always copied into the AppDir as `{app}.{ext}`, matching the `Icon={app}` entry in the `.desktop` file
+- `appimagetool` config key and `--appimagetool PATH` CLI option: use a local binary instead of downloading; resolution order is config/CLI → `PATH` → build cache → download
+- `python_archive` config key and `--python-archive PATH` CLI option: use a local python-build-standalone tarball; resolution order is config/CLI → build cache → download
+- `examples/myapp/`: minimal example project demonstrating zero-configuration usage
 
 ### Changed
 
 - README: restructured with visual header, badges, RTD button; simplified to highlight unique features
 - License changed from GPL v3 to Apache 2.0
 - Project metadata: corrected description, homepage, documentation URL and PyPI classifiers
+- AppRun and `.desktop` templates moved from inline strings to `appimage/build/templates/` and loaded via `importlib.resources`
+- `generate_icon.py` developer script moved from `appimage/assets/` to `scripts/` (not part of the installed package)
 
 ### Documentation
 
 - Added Sphinx documentation hosted on Read the Docs (sphinx-rtd-theme)
-- Covers Quick Start, Configuration, CLI reference, Runtime, and Changelog
-- CLI reference completed with missing `--app`, `--entry-point`, `--extras` options
-- Added notes on Linux-only support, supported architectures, and automatic appimagetool download
+- Covers Quick Start, Configuration, CLI reference, Runtime, Internals, and Changelog
+- CLI reference completed with missing `--app`, `--entry-point`, `--extras`, `--appimagetool`, `--python-archive` options
+- Added `examples.md` page with minimal project walkthrough and offline/CI build instructions
+- Added `internals.md` page explaining how AppImages are built
 
 ## [1.2.0] - 2026-05-08
 
