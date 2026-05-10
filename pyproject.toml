@@ -56,6 +56,8 @@ include = [
     "appimage/**/*.py",
     "appimage/assets/*.svg",
     "appimage/assets/*.png",
+    "appimage/build/templates/AppRun.sh",
+    "appimage/build/templates/desktop.template",
 ]
 
 [tool.hatch.envs.hatch-test]

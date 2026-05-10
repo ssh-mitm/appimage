@@ -18,6 +18,8 @@ All options go in `[tool.appimage.build]` inside `pyproject.toml`. Every key is 
 | `build_dir` | `"build"` | Directory for intermediate artefacts (Python tarball, appimagetool). |
 | `dist_dir` | `"dist"` | Directory where the finished AppImage is written. |
 | `update_info` | — | Update information string passed to appimagetool via `-u` (e.g. for zsync). |
+| `appimagetool` | — | Path to a local appimagetool binary. When omitted, `PATH` is searched first, then the build cache, and finally a download. |
+| `python_archive` | — | Path to a local python-build-standalone tarball. When omitted, the build cache is checked first, then a download. |
 
 ## Environment variables in AppRun
 

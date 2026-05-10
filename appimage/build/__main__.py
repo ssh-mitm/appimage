@@ -77,6 +77,24 @@ def _parse_args() -> argparse.Namespace:
         metavar="DIR",
         help="Project root directory (default: current directory).",
     )
+    parser.add_argument(
+        "--appimagetool",
+        dest="appimagetool",
+        metavar="PATH",
+        help=(
+            "Path to a local appimagetool binary. "
+            "When omitted, PATH is searched, then the build cache, then a download."
+        ),
+    )
+    parser.add_argument(
+        "--python-archive",
+        dest="python_archive",
+        metavar="PATH",
+        help=(
+            "Path to a local python-build-standalone tarball. "
+            "When omitted, the build cache is checked, then a download."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -94,6 +112,10 @@ def _apply_cli_overrides(config: BuildConfig, args: argparse.Namespace) -> None:
         config.extras = args.extras
     if args.packages:
         config.packages = args.packages
+    if args.appimagetool:
+        config.appimagetool = args.appimagetool
+    if args.python_archive:
+        config.python_archive = args.python_archive
 
 
 def main() -> None:

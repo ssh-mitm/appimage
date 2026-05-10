@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name={name}
+{comment_line}Icon={app}
+Categories=Utility;
+Terminal=true

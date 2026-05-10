@@ -6,6 +6,7 @@
 
 configuration
 cli
+examples
 runtime
 internals
 changelog
@@ -20,7 +21,7 @@ It bundles a complete Python distribution from [python-build-standalone](https:/
 ```{note}
 AppImage is a Linux-only format. Building and running AppImages requires Linux.
 Supported architectures: **x86_64**, **aarch64**, **armv7**.
-[appimagetool](https://github.com/AppImage/AppImageKit) is downloaded automatically during the build — no manual installation required.
+[appimagetool](https://github.com/AppImage/AppImageKit) is resolved automatically: if it is already on `PATH` it is used as-is; otherwise the build cache is checked, and finally it is downloaded. The same caching logic applies to the bundled Python distribution.
 ```
 
 ## Install

@@ -1,5 +1,6 @@
 """Build an AppImage from a Python project configured via pyproject.toml."""
 
+import importlib.resources
 import json
 import logging
 import os
@@ -35,33 +36,9 @@ _ICON_SEARCH_DIRS: Final = (".", "appimage", "assets", "packaging", "data", "ico
 _ICON_EXTENSIONS: Final = (".png", ".svg")
 _DESKTOP_SEARCH_DIRS: Final = (".", "appimage", "assets", "packaging", "data")
 
-_APPRUN_TEMPLATE: Final = """\
-#!/bin/bash
-set -e
-
-{env_block}
-if [ -n "$APPIMAGE" ]; then
-    appimage_path=$(dirname "$APPIMAGE")
-    if [ -d "$appimage_path/squashfs-root" ]; then
-        export APPDIR="$appimage_path/squashfs-root"
-    fi
-fi
-
-if [ -z "$APPDIR" ]; then
-    export APPDIR=$(dirname $(readlink -f "$0"))
-fi
-
-exec "$APPDIR/python/bin/python3" -P -m appimage --python-main {entry_point} "$@"
-"""
-
-_DESKTOP_TEMPLATE: Final = """\
-[Desktop Entry]
-Type=Application
-Name={name}
-{comment_line}Icon={app}
-Categories=Utility;
-Terminal=true
-"""
+_pkg = importlib.resources.files("appimage.build")
+_APPRUN_TEMPLATE: Final = (_pkg / "templates" / "AppRun.sh").read_text(encoding="utf-8")
+_DESKTOP_TEMPLATE: Final = (_pkg / "templates" / "desktop.template").read_text(encoding="utf-8")
 
 
 @dataclass
@@ -111,6 +88,12 @@ class BuildConfig:
         Keys are source paths; values are destinations relative to AppDir.
     hooks : dict[str, str]
         Lifecycle hook scripts. Supported keys: ``post_install``, ``pre_package``.
+    appimagetool : str
+        Path to a local appimagetool binary. When empty, the tool is looked up
+        in ``PATH``, then in the build cache, and finally downloaded.
+    python_archive : str
+        Path to a local python-build-standalone tarball. When empty, the
+        archive is looked up in the build cache and then downloaded.
 
     """
 
@@ -129,6 +112,8 @@ class BuildConfig:
     env: dict[str, str] = field(default_factory=dict)
     extra_files: dict[str, str] = field(default_factory=dict)
     hooks: dict[str, str] = field(default_factory=dict)
+    appimagetool: str = ""
+    python_archive: str = ""
 
     @classmethod
     def from_pyproject(cls, project_root: Path) -> "BuildConfig":
@@ -176,6 +161,8 @@ class BuildConfig:
             env=cfg.get("env", {}),
             extra_files=cfg.get("extra_files", {}),
             hooks=cfg.get("hooks", {}),
+            appimagetool=cfg.get("appimagetool", ""),
+            python_archive=cfg.get("python_archive", ""),
         )
 
 
@@ -197,6 +184,8 @@ class _ResolvedBuild:
     env: dict[str, str]
     extra_files: dict[str, str]
     hooks: dict[str, str]
+    appimagetool: str
+    python_archive: str
     sources: dict[str, str]
     warnings: list[str]
     errors: list[str]
@@ -447,10 +436,34 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         env=config.env,
         extra_files=config.extra_files,
         hooks=config.hooks,
+        appimagetool=config.appimagetool,
+        python_archive=config.python_archive,
         sources=sources,
         warnings=warnings,
         errors=errors,
     )
+
+
+def _icon_display(icon: Path | None) -> str:
+    """Return a display-friendly path string for an icon."""
+    if not icon:
+        return "NOT FOUND"
+    if icon.is_relative_to(Path.cwd()):
+        return str(icon.relative_to(Path.cwd()))
+    return str(icon)
+
+
+def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]:
+    """Return extra rows for optional config fields that are set."""
+    cfg = "[tool.appimage.build]"
+    candidates = [
+        ("apprun", resolved.apprun),
+        ("update_info", resolved.update_info),
+        ("python_date", resolved.python_date),
+        ("python_archive", resolved.python_archive),
+        ("appimagetool", resolved.appimagetool),
+    ]
+    return [(name, value, cfg) for name, value in candidates if value]
 
 
 def _format_check(resolved: _ResolvedBuild) -> None:
@@ -468,16 +481,8 @@ def _format_check(resolved: _ResolvedBuild) -> None:
         ("app", resolved.app, resolved.sources.get("app", "")),
         ("entry_point", resolved.entry_point, resolved.sources.get("entry_point", "")),
         ("python", resolved.python, resolved.sources.get("python", "")),
-        (
-            "packages",
-            " ".join(resolved.install_targets),
-            resolved.sources.get("packages", ""),
-        ),
-        (
-            "icon",
-            (str(resolved.icon.relative_to(Path.cwd())) if resolved.icon.is_relative_to(Path.cwd()) else str(resolved.icon)) if resolved.icon else "NOT FOUND",
-            resolved.sources.get("icon", ""),
-        ),
+        ("packages", " ".join(resolved.install_targets), resolved.sources.get("packages", "")),
+        ("icon", _icon_display(resolved.icon), resolved.sources.get("icon", "")),
         (
             "desktop",
             str(resolved.desktop.relative_to(Path.cwd())) if resolved.desktop else "(generated)",
@@ -485,13 +490,8 @@ def _format_check(resolved: _ResolvedBuild) -> None:
         ),
         ("build_dir", resolved.build_dir, resolved.sources.get("build_dir", "")),
         ("dist_dir", resolved.dist_dir, resolved.sources.get("dist_dir", "")),
+        *_optional_check_rows(resolved),
     ]
-    if resolved.apprun:
-        rows.append(("apprun", resolved.apprun, "[tool.appimage.build]"))
-    if resolved.update_info:
-        rows.append(("update_info", resolved.update_info, "[tool.appimage.build]"))
-    if resolved.python_date:
-        rows.append(("python_date", resolved.python_date, "[tool.appimage.build]"))
 
     for name, value, source in rows:
         _log.info("  %-15s %-35s [%s]", f"{name}:", value, source)
@@ -750,22 +750,60 @@ def _run_hook(script: str, project_root: Path, appdir: Path) -> None:
     )
 
 
-def _prepare_python(
+def _resolve_python_tarball(
     resolved: _ResolvedBuild,
     python_cache: Path,
-    appdir: Path,
     arch: str,
-    project_root: Path,
-) -> None:
-    """Download, extract Python and install packages into AppDir."""
+) -> Path:
+    """Return the path to the Python tarball, downloading if necessary."""
+    if resolved.python_archive:
+        tarball = Path(resolved.python_archive)
+        if not tarball.exists():
+            msg = f"Python archive not found: {tarball}"
+            raise FileNotFoundError(msg)
+        _log.info("Using Python archive: %s", tarball)
+        return tarball
     if python_cache.exists():
         _log.info("Using cached python.tar.gz")
-    else:
-        python_url = _resolve_python_url(resolved.python, resolved.python_date, arch)
-        _download(python_url, python_cache)
+        return python_cache
+    python_url = _resolve_python_url(resolved.python, resolved.python_date, arch)
+    _download(python_url, python_cache)
+    return python_cache
 
+
+def _resolve_appimagetool(
+    resolved: _ResolvedBuild,
+    appimagetool_cache: Path,
+    arch: str,
+) -> Path:
+    """Return the path to appimagetool, downloading if necessary."""
+    if resolved.appimagetool:
+        tool = Path(resolved.appimagetool)
+        if not tool.exists():
+            msg = f"appimagetool not found: {tool}"
+            raise FileNotFoundError(msg)
+        _log.info("Using appimagetool: %s", tool)
+        return tool
+    if path_tool := shutil.which("appimagetool"):
+        _log.info("Using appimagetool from PATH: %s", path_tool)
+        return Path(path_tool)
+    if appimagetool_cache.exists():
+        _log.info("Using cached appimagetool")
+        return appimagetool_cache
+    _download(_APPIMAGETOOL_URL.format(arch=arch), appimagetool_cache)
+    appimagetool_cache.chmod(0o755)
+    return appimagetool_cache
+
+
+def _prepare_python(
+    resolved: _ResolvedBuild,
+    python_tarball: Path,
+    appdir: Path,
+    project_root: Path,
+) -> None:
+    """Extract Python and install packages into AppDir."""
     _log.info("Extracting Python...")
-    with tarfile.open(python_cache) as tar:
+    with tarfile.open(python_tarball) as tar:
         tar.extractall(appdir)  # noqa: S202  # nosec B202
 
     python_bin = appdir / "python" / "bin" / "python3"
@@ -850,7 +888,8 @@ def build(config: BuildConfig, project_root: Path) -> None:
         shutil.rmtree(appdir)
     appdir.mkdir(parents=True)
 
-    _prepare_python(resolved, python_cache, appdir, arch, project_root)
+    python_tarball = _resolve_python_tarball(resolved, python_cache, arch)
+    _prepare_python(resolved, python_tarball, appdir, project_root)
     _copy_assets(resolved, project_root, appdir)
     _copy_extra_files(resolved, project_root, appdir)
 
@@ -858,16 +897,12 @@ def build(config: BuildConfig, project_root: Path) -> None:
         _log.info("Running pre_package hook...")
         _run_hook(hook, project_root, appdir)
 
-    if appimagetool_cache.exists():
-        _log.info("Using cached appimagetool")
-    else:
-        _download(_APPIMAGETOOL_URL.format(arch=arch), appimagetool_cache)
-        appimagetool_cache.chmod(0o755)
+    appimagetool_bin = _resolve_appimagetool(resolved, appimagetool_cache, arch)
 
     dist_dir.mkdir(parents=True, exist_ok=True)
     output_name = f"{resolved.app}-{arch}.AppImage"
 
-    cmd = [str(appimagetool_cache)]
+    cmd = [str(appimagetool_bin)]
     if resolved.update_info:
         cmd += ["-u", resolved.update_info]
     cmd += [str(appdir), output_name]

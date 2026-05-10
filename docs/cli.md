@@ -20,6 +20,8 @@ appimage-build [OPTIONS]
 | `--extras EXTRA` | Override extras to install (e.g. `production`). May be repeated. |
 | `--package TARGET` | Additional pip install target. May be repeated. |
 | `--project-dir PATH` | Path to the project root (default: current directory). |
+| `--appimagetool PATH` | Path to a local appimagetool binary. Skips PATH lookup and download. |
+| `--python-archive PATH` | Path to a local python-build-standalone tarball. Skips the download. |
 
 ### Examples
 
@@ -38,4 +40,15 @@ python -m appimage.build --extras production --package extra-lib
 
 # Build from a different project directory
 python -m appimage.build --project-dir /path/to/project
+
+# Use a locally installed appimagetool instead of downloading
+python -m appimage.build --appimagetool /opt/appimagetool-x86_64.AppImage
+
+# Use a previously downloaded Python archive (e.g. from another build)
+python -m appimage.build --python-archive /shared/cache/python.tar.gz
+
+# Fully offline build using local copies of both tools
+python -m appimage.build \
+  --appimagetool /opt/appimagetool-x86_64.AppImage \
+  --python-archive /shared/cache/python-3.11-x86_64.tar.gz
 ```
