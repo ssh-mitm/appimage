@@ -1,3 +1,4 @@
+# Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
 """appimage module.
 
 The `appimage` module is designed to facilitate the initialization of applications within an AppImage via AppRun.

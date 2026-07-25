@@ -1,3 +1,4 @@
+# Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
 """Entry point for ``python -m appimage.build``."""
 
 import argparse

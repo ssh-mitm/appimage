@@ -1,3 +1,4 @@
+# Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
 """Module for initializing applications within an AppImage via AppRun.
 
 This module is designed to be invoked by the AppRun script of an AppImage and is not intended

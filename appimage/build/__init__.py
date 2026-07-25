@@ -1,3 +1,4 @@
+# Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
 """Build an AppImage from a Python project configured via pyproject.toml."""
 
 import importlib.metadata

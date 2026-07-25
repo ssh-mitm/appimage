@@ -144,6 +144,9 @@ ignore = [
 [tool.ruff.lint.pylint]
 max-args = 7
 
+[tool.ruff.lint.flake8-copyright]
+author = "SSH-MITM Dev-Team"
+
 [tool.black]
 target-version = ["py311"]
 

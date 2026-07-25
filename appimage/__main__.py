@@ -1,3 +1,4 @@
+# Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
 """appimage module.
 
 This module initializes applications within an AppImage by calling the appimage module.
