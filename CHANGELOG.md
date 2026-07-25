@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-07-25
+
 ### Fixed
 
 - `appimage.build` now always installs the `appimage` runtime module into the bundled `site-packages`, pinned to the currently running build version, instead of relying on the packaged project declaring `appimage` as a dependency itself. Previously, a built AppImage would fail at startup with `No module named appimage` unless `appimage` was explicitly listed in `[project.dependencies]`, which none of the documented examples did.
@@ -106,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release on pypi.org
 
-[Unreleased]: https://github.com/ssh-mitm/appimage/compare/2.0.0...main
+[Unreleased]: https://github.com/ssh-mitm/appimage/compare/2.0.1...main
+[2.0.1]: https://github.com/ssh-mitm/appimage/compare/2.0.0...2.0.1
 [2.0.0]: https://github.com/ssh-mitm/appimage/compare/1.2.0...2.0.0
 [1.2.0]: https://github.com/ssh-mitm/appimage/compare/1.1.1...1.2.0
 [1.1.1]: https://github.com/ssh-mitm/appimage/compare/1.1.0...1.1.1
