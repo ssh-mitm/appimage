@@ -1,5 +1,6 @@
 """Build an AppImage from a Python project configured via pyproject.toml."""
 
+import importlib.metadata
 import importlib.resources
 import json
 import logging
@@ -412,7 +413,14 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     else:
         base = "."
         sources["packages"] = "default (.)"
-    install_targets = [base, *config.packages]
+
+    # The `appimage` runtime module handles entry point dispatch and the
+    # `--python-*` flags inside the built AppImage. It must be installed into
+    # the bundled site-packages regardless of whether the packaged project
+    # declares it as a dependency. Pinning to the currently running build
+    # version keeps AppRun's expectations and the bundled runtime in sync.
+    appimage_pin = f"appimage=={importlib.metadata.version('appimage')}"
+    install_targets = [appimage_pin, base, *config.packages]
 
     sources["build_dir"] = (
         "[tool.appimage.build]" if config.build_dir != "build" else "default"

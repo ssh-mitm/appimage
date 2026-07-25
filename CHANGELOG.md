@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `appimage.build` now always installs the `appimage` runtime module into the bundled `site-packages`, pinned to the currently running build version, instead of relying on the packaged project declaring `appimage` as a dependency itself. Previously, a built AppImage would fail at startup with `No module named appimage` unless `appimage` was explicitly listed in `[project.dependencies]`, which none of the documented examples did.
+
 ## [2.0.0] - 2026-05-10
 
 ### Added
