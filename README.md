@@ -61,7 +61,7 @@ bug](https://github.com/AppImage/AppImageKit/issues/929) that no input
 normalization can work around — `appimage` defaults to its maintained,
 fixed successor instead).
 
-→ **[Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html)** — why this is hard, what's automatic, and how to pin appimagetool/Python for cross-machine guarantees.
+→ **[Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html)** — why this is hard, what's automatic, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `--lock`.
 
 
 ## Bundled interpreter access

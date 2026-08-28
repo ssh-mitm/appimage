@@ -38,6 +38,7 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "app": "myapp",
         "entry_point": "myapp",
         "install_targets": ["."],
+        "local_install_targets": ["."],
         "python": "3.11",
         "python_date": "",
         "icon": None,
@@ -58,6 +59,8 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "runtime_sha256": "",
         "verify_downloads": False,
         "require_zsyncmake": False,
+        "pylock": "",
+        "require_pylock": False,
         "reproducible": False,
         "sources": {},
         "warnings": [],
@@ -731,3 +734,235 @@ def test_write_config_skips_appimagetool_resolution_when_already_set(tmp_path: P
 
     mock_resolve_tool.assert_not_called()
     mock_resolve_runtime.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# pylock (dependency hash-pinning)
+# ---------------------------------------------------------------------------
+
+def _has_pylock_message(messages: list[str]) -> bool:
+    return any("No pylock configured" in m for m in messages)
+
+
+def test_pylock_warns_by_default(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert _has_pylock_message(resolved.warnings)
+
+
+def test_pylock_errors_with_require_pylock(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(require_pylock=True)
+
+    resolved = _resolve(config, tmp_path)
+
+    assert not _has_pylock_message(resolved.warnings)
+    assert _has_pylock_message(resolved.errors)
+
+
+def test_pylock_noop_when_configured(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(pylock="pylock.toml")
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert not _has_pylock_message(resolved.warnings)
+
+
+# ---------------------------------------------------------------------------
+# _reproducibility_summary
+# ---------------------------------------------------------------------------
+
+def test_reproducibility_summary_reports_zero_of_three_by_default() -> None:
+    from appimage.build import _reproducibility_summary
+
+    resolved = make_resolved()
+
+    lines = _reproducibility_summary(resolved)
+
+    assert any("Reproducibility: 0/3 pins set" in line for line in lines)
+    assert any("--init" in line for line in lines)
+    assert any("Dependency verification: pylock not set" in line for line in lines)
+    assert any("--lock" in line for line in lines)
+
+
+def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
+    from appimage.build import _reproducibility_summary
+
+    resolved = make_resolved(
+        python_date="20260211",
+        appimagetool_sha256="a" * 64,
+        runtime_sha256="b" * 64,
+        pylock="pylock.toml",
+    )
+
+    lines = _reproducibility_summary(resolved)
+
+    assert any("Reproducibility: 3/3 pins set" in line for line in lines)
+    assert not any("--init" in line for line in lines)
+    assert any("Dependency verification: pylock set (pylock.toml)" in line for line in lines)
+
+
+def test_reproducibility_summary_reports_partial_pins() -> None:
+    from appimage.build import _reproducibility_summary
+
+    resolved = make_resolved(python_date="20260211")
+
+    lines = _reproducibility_summary(resolved)
+
+    assert any("Reproducibility: 1/3 pins set" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# _install_from_pylock / _prepare_python with pylock configured
+# ---------------------------------------------------------------------------
+
+def test_prepare_python_uses_pylock_when_configured(tmp_path: Path) -> None:
+    from appimage.build import _prepare_python
+
+    (tmp_path / "pylock.toml").write_text("")
+    resolved = make_resolved(
+        install_targets=["appimage==2.0.1", "."],
+        local_install_targets=["."],
+        pylock="pylock.toml",
+    )
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+    tarball = tmp_path / "python.tar.gz"
+    tarball.write_bytes(b"")
+
+    with patch("appimage.build.tarfile.open") as mock_tarfile, \
+         patch("appimage.build.subprocess.run") as mock_run:
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        _prepare_python(resolved, tarball, appdir, tmp_path)
+
+    calls = [c.args[0] for c in mock_run.call_args_list]
+    assert len(calls) == 2
+    local_call, lock_call = calls
+    assert "--no-deps" in local_call
+    assert "." in local_call
+    assert "appimage==2.0.1" not in local_call
+    assert "--require-hashes" in lock_call
+    assert "--no-deps" in lock_call
+    assert str(tmp_path / "pylock.toml") in lock_call
+
+
+def test_prepare_python_raises_when_pylock_missing(tmp_path: Path) -> None:
+    from appimage.build import _prepare_python
+
+    resolved = make_resolved(pylock="pylock.toml")
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+    tarball = tmp_path / "python.tar.gz"
+    tarball.write_bytes(b"")
+
+    with patch("appimage.build.tarfile.open") as mock_tarfile:
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        with pytest.raises(FileNotFoundError):
+            _prepare_python(resolved, tarball, appdir, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# _pip_version / _generate_lock / lock()
+# ---------------------------------------------------------------------------
+
+def test_pip_version_parses_output(tmp_path: Path) -> None:
+    from appimage.build import _pip_version
+
+    fake_result = MagicMock(stdout="pip 26.1.2 from /some/path (python 3.13)\n")
+    with patch("appimage.build.subprocess.run", return_value=fake_result):
+        assert _pip_version(tmp_path / "python3") == (26, 1)
+
+
+def test_pip_version_raises_on_unparseable_output(tmp_path: Path) -> None:
+    from appimage.build import _pip_version
+
+    fake_result = MagicMock(stdout="not a pip version string\n")
+    with patch("appimage.build.subprocess.run", return_value=fake_result), \
+         pytest.raises(RuntimeError):
+        _pip_version(tmp_path / "python3")
+
+
+def test_generate_lock_raises_for_old_pip(tmp_path: Path) -> None:
+    from appimage.build import _generate_lock
+
+    resolved = make_resolved(pylock="pylock.toml")
+    with patch("appimage.build._pip_version", return_value=(24, 3)), \
+         pytest.raises(RuntimeError, match="does not support"):
+        _generate_lock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
+
+
+def test_generate_lock_builds_expected_command(tmp_path: Path) -> None:
+    from appimage.build import _generate_lock
+
+    resolved = make_resolved(
+        install_targets=["appimage==2.0.1", ".", "extra-pkg"], pylock="pylock.toml",
+    )
+
+    with patch("appimage.build._pip_version", return_value=(25, 1)), \
+         patch("appimage.build.subprocess.run") as mock_run:
+        result = _generate_lock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="P7D")
+
+    assert result == tmp_path / "pylock.toml"
+    cmd = mock_run.call_args.args[0]
+    assert "lock" in cmd
+    assert "appimage==2.0.1" in cmd
+    assert "extra-pkg" in cmd
+    assert "--only-deps" in cmd
+    assert "--uploaded-prior-to" in cmd
+    assert "P7D" in cmd
+    assert str(tmp_path / "pylock.toml") in cmd
+
+
+def test_generate_lock_omits_uploaded_prior_to_when_unset(tmp_path: Path) -> None:
+    from appimage.build import _generate_lock
+
+    resolved = make_resolved(pylock="pylock.toml")
+
+    with patch("appimage.build._pip_version", return_value=(25, 1)), \
+         patch("appimage.build.subprocess.run") as mock_run:
+        _generate_lock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
+
+    cmd = mock_run.call_args.args[0]
+    assert "--uploaded-prior-to" not in cmd
+
+
+def test_lock_writes_pylock_to_pyproject_when_unset(tmp_path: Path) -> None:
+    from appimage.build import lock
+
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    with patch("appimage.build._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
+         patch("appimage.build.tarfile.open") as mock_tarfile, \
+         patch("appimage.build._generate_lock", return_value=tmp_path / "pylock.toml") as mock_generate:
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        lock(config, tmp_path)
+
+    mock_generate.assert_called_once()
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert 'pylock = "pylock.toml"' in content
+
+
+def test_lock_skips_write_when_already_set(tmp_path: Path) -> None:
+    from appimage.build import lock
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[tool.appimage.build]\npylock = "custom-lock.toml"\n'
+    )
+    config = BuildConfig.from_pyproject(tmp_path)
+
+    with patch("appimage.build._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
+         patch("appimage.build.tarfile.open") as mock_tarfile, \
+         patch("appimage.build._generate_lock", return_value=tmp_path / "custom-lock.toml"):
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        lock(config, tmp_path)
+
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert content.count("pylock =") == 1

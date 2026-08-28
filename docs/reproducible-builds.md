@@ -107,6 +107,128 @@ the pins) as a shortcut that enforces all of the above at once: it implies
 since resolving any of those three fresh on every build is exactly what
 defeats cross-machine reproducibility in the first place.
 
+## Verified dependencies
+
+Everything above pins *appimage.build's own* build tooling — appimagetool,
+the runtime stub, the interpreter. None of it touches how your project's
+third-party dependencies get installed: by default, `pip install
+".[extras]"` resolves and downloads whatever the index currently serves,
+unverified. A compromised or typosquatted package pulled in that way ends
+up inside the AppImage with nothing to catch it.
+
+`pylock` closes that gap:
+
+```toml
+[tool.appimage.build]
+pylock = "pylock.toml"
+```
+
+```sh
+python -m appimage.build --lock       # generate/refresh pylock.toml
+python -m appimage.build --require-pylock   # abort if pylock isn't set
+```
+
+### `--lock` is a thin wrapper, not a new mechanism
+
+`--lock` does not implement any hashing or dependency resolution itself.
+It runs exactly one command — `pip lock` (built into pip since 25.1) —
+through the bundled python-build-standalone interpreter rather than your
+own:
+
+```sh
+build/AppDir/python/bin/python3 -m pip lock \
+    appimage==2.0.1 ".[extras]" <packages...> \
+    --only-deps -o pylock.toml
+```
+
+Running it through the bundled interpreter, not your local one, is the
+one thing `--lock` adds over typing that command by hand: `pip lock`
+resolves wheels for whatever interpreter runs it, so a lock generated with
+your local Python could pin a different platform/ABI than what the
+AppImage actually bundles. `--lock` also reads `extras`/`packages` from
+`[tool.appimage.build]` for you, so that list isn't maintained twice.
+Nothing about it is otherwise different from running the command above
+yourself.
+
+`--only-deps` excludes the local project (`.`/`.[extras]`) from the lock —
+it has no stable hash to pin between source edits, so it stays out and is
+installed separately at build time (below). `appimage==2.0.1` and any
+`packages` entries *are* real PyPI distributions, though, and stay in the
+lock with their own hash like any other dependency.
+
+### What the real build does with it
+
+With `pylock` configured, `_prepare_python` runs two separate `pip
+install` calls instead of one:
+
+```sh
+pip install --no-compile --no-deps .[extras]                       # local source, trusted, unhashed
+pip install --no-compile --no-deps --require-hashes -r pylock.toml # everything else, hash-verified
+```
+
+Two calls, not one, because pip's hash-checking mode — triggered the
+moment any requirement in a given invocation carries a hash — then demands
+*every* requirement in that same invocation carry one; mixing the unhashed
+local project into the `--require-hashes` call would fail outright.
+`--no-deps` on both keeps each strictly to what it's given: the local
+install won't reach past its own listed dependencies, and the lock install
+won't silently pull in anything beyond what got hashed.
+
+### Cooldowns
+
+`pip lock` also accepts `--uploaded-prior-to`, passed through via
+`--uploaded-prior-to PnD` on `--lock` (e.g. `P7D`): excludes packages
+published more recently than that window from the resolution, giving the
+community time to catch a compromised release before it gets locked in.
+It only makes sense at generation time — the real build installs exactly
+what's already pinned in `pylock.toml`, so a cooldown there would have
+nothing left to act on.
+
+### Private package indexes (Artifactory, Nexus, devpi, ...)
+
+Neither `--lock` nor a normal build passes any pip-specific flags for index
+selection or authentication — no `--index-url`, no custom `env=` for the
+subprocess. Every `pip`/`pip lock` call in `appimage.build` inherits the
+calling process's environment as-is, so pip's own standard mechanisms
+already work with no configuration on appimage's side:
+
+- `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` / `PIP_TRUSTED_HOST` / `PIP_CERT`
+  environment variables
+- `pip.conf` (or `PIP_CONFIG_FILE`) at whatever location pip normally
+  searches
+- `.netrc` for per-host credentials
+
+Point these at an internal Artifactory/Nexus/devpi mirror the same way you
+would for any other pip invocation, and both `packages`/`extras`
+installs and `--lock`'s dependency resolution pick it up automatically.
+This is deliberate, not just an accident of not having built anything
+else yet: credentials belong in environment/config, not as CLI arguments
+to a subprocess — an argument list can leak to other users on the same
+machine via process listings in a way an environment variable set only
+for that process does not.
+
+There's currently no equivalent of `--build-constraint`-style one-off CLI
+passthrough for occasional, non-persistent overrides (e.g. pointing a
+single `--lock` run at a different index without touching `pip.conf`) —
+only the persistent env/config path above is supported today.
+
+### Relationship to `reproducible`
+
+`pylock`/`require_pylock` are deliberately independent of `reproducible`
+— hash-pinned dependencies and byte-identical output are separate
+guarantees, and `reproducible` does not imply or require `pylock`. Opt
+into both explicitly if you want both.
+
+### Known limits
+
+`pip lock` is documented by pip itself as experimental — its behavior may
+change without notice in a future pip release. `pip install -r
+pylock.toml --require-hashes` needs pip >= 26.1 in the bundled
+interpreter; `--lock` checks for pip >= 25.1 (what `pip lock` itself
+needs) before generating, but a build against an existing `pylock.toml`
+with an older bundled pip will fail with a plain pip error rather than
+this tool's own message.
+
 ## Not covered here
 
 This page is about the AppImages `appimage.build` produces for *your*

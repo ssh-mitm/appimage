@@ -163,6 +163,18 @@ class BuildConfig:
         ``zsyncmake`` is not found on ``PATH`` — instead of logging a
         warning and packaging an AppImage with no ``.zsync`` delta-update
         file. Has no effect when ``update_info`` is empty.
+    pylock : str
+        Path to a PEP 751 ``pylock.toml`` file, relative to the project
+        root, pinning every third-party runtime dependency to an exact
+        version and sha256 hash. When set, the build installs the local
+        project itself (untouched, trusted source) with ``--no-deps``, then
+        installs everything else from this file with ``pip install
+        --require-hashes`` — a compromised or typosquatted dependency
+        pulled in at build time is rejected instead of silently installed.
+        Generate it with ``--lock`` (see docs/reproducible-builds.md).
+    require_pylock : bool
+        When true, abort the build if ``pylock`` is not set — instead of
+        logging a warning and installing dependencies unverified.
     reproducible : bool
         Shortcut that sets every option needed for a build that is
         reproducible across machines and over time, not just within the
@@ -199,6 +211,8 @@ class BuildConfig:
     runtime_sha256: str = ""
     verify_downloads: bool = False
     require_zsyncmake: bool = False
+    pylock: str = ""
+    require_pylock: bool = False
     reproducible: bool = False
 
     @classmethod
@@ -256,6 +270,8 @@ class BuildConfig:
             runtime_sha256=cfg.get("runtime_sha256", ""),
             verify_downloads=cfg.get("verify_downloads", False),
             require_zsyncmake=cfg.get("require_zsyncmake", False),
+            pylock=cfg.get("pylock", ""),
+            require_pylock=cfg.get("require_pylock", False),
             reproducible=cfg.get("reproducible", False),
         )
 
@@ -267,6 +283,7 @@ class _ResolvedBuild:
     app: str
     entry_point: str
     install_targets: list[str]
+    local_install_targets: list[str]
     python: str
     python_date: str
     icon: Path | None
@@ -287,6 +304,8 @@ class _ResolvedBuild:
     runtime_sha256: str
     verify_downloads: bool
     require_zsyncmake: bool
+    pylock: str
+    require_pylock: bool
     reproducible: bool
     sources: dict[str, str]
     warnings: list[str]
@@ -548,10 +567,19 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         )
         (errors if require_zsyncmake else warnings).append(zsyncmake_msg)
 
+    if not config.pylock:
+        pylock_msg = (
+            "No pylock configured — third-party dependencies are installed "
+            "without hash verification. Run --lock to generate pylock.toml, "
+            'then set pylock = "pylock.toml" in [tool.appimage.build].'
+        )
+        (errors if config.require_pylock else warnings).append(pylock_msg)
+
     return _ResolvedBuild(
         app=app,
         entry_point=entry_point,
         install_targets=install_targets,
+        local_install_targets=[base],
         python=python,
         python_date=config.python_date,
         icon=icon,
@@ -572,6 +600,8 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         runtime_sha256=config.runtime_sha256,
         verify_downloads=verify_downloads,
         require_zsyncmake=require_zsyncmake,
+        pylock=config.pylock,
+        require_pylock=config.require_pylock,
         reproducible=config.reproducible,
         sources=sources,
         warnings=warnings,
@@ -602,6 +632,7 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         ("appimagetool_sha256", resolved.appimagetool_sha256),
         ("runtime_file", resolved.runtime_file),
         ("runtime_sha256", resolved.runtime_sha256),
+        ("pylock", resolved.pylock),
     ]
     rows = [(name, value, cfg) for name, value in candidates if value]
     if resolved.reproducible:
@@ -610,7 +641,40 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         rows.append(("verify_downloads", "true", cfg))
     if resolved.require_zsyncmake:
         rows.append(("require_zsyncmake", "true", cfg))
+    if resolved.require_pylock:
+        rows.append(("require_pylock", "true", cfg))
     return rows
+
+
+_REPRODUCIBILITY_PINS: Final = ("python_date", "appimagetool_sha256", "runtime_sha256")
+
+
+def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
+    """Return a short status summary of the two independent pinning stories.
+
+    Unlike the individual warnings above, this always reflects the current
+    state — not just when ``reproducible``/``require_pylock`` are set and
+    something is missing. Without it, a plain ``--check`` gives no signal
+    at all about the three reproducibility pins: they only ever surface as
+    a warning deep inside a real ``build()`` run (when appimagetool/
+    runtime/python are actually resolved) or as a hard error once
+    ``reproducible`` is already turned on — nothing in between.
+    """
+    pinned = [key for key in _REPRODUCIBILITY_PINS if getattr(resolved, key)]
+    if len(pinned) == len(_REPRODUCIBILITY_PINS):
+        repro_line = f"Reproducibility: {len(pinned)}/{len(_REPRODUCIBILITY_PINS)} pins set"
+    else:
+        repro_line = (
+            f"Reproducibility: {len(pinned)}/{len(_REPRODUCIBILITY_PINS)} pins set "
+            f"({', '.join(_REPRODUCIBILITY_PINS)}) — run --init to resolve and pin them"
+        )
+
+    pylock_line = (
+        f"Dependency verification: pylock set ({resolved.pylock})"
+        if resolved.pylock
+        else "Dependency verification: pylock not set — run --lock to generate pylock.toml"
+    )
+    return [repro_line, pylock_line]
 
 
 def _format_check(resolved: _ResolvedBuild) -> None:
@@ -642,6 +706,10 @@ def _format_check(resolved: _ResolvedBuild) -> None:
 
     for name, value, source in rows:
         _log.info("  %-15s %-35s [%s]", f"{name}:", value, source)
+
+    _log.info("")
+    for line in _reproducibility_summary(resolved):
+        _log.info("  %s", line)
 
     if resolved.warnings:
         _log.info("")
@@ -1148,6 +1216,145 @@ def _resolve_python_tarball(
     return python_cache
 
 
+# `pip lock` (generates pylock.toml) needs pip >= 25.1; `pip install -r
+# pylock.toml` (consumed by `_install_from_pylock`) needs pip >= 26.1. Only
+# the generation side is checked here — by the time a build tries to
+# install from an existing pylock.toml, a hard pip error surfaces the same
+# problem anyway, and duplicating the check there would mean parsing pip's
+# version on every single build instead of only on `--lock`.
+_MIN_PIP_LOCK_VERSION: Final = (25, 1)
+
+
+def _pip_version(python_bin: Path) -> tuple[int, int]:
+    """Return the (major, minor) version of pip installed for *python_bin*."""
+    result = subprocess.run(  # noqa: S603  # nosec B603
+        [str(python_bin), "-m", "pip", "--version"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    match = re.match(r"pip (\d+)\.(\d+)", result.stdout)
+    if not match:
+        msg = f"Could not determine pip version from: {result.stdout.strip()!r}"
+        raise RuntimeError(msg)
+    return int(match.group(1)), int(match.group(2))
+
+
+def _generate_lock(
+    resolved: _ResolvedBuild,
+    python_bin: Path,
+    project_root: Path,
+    *,
+    uploaded_prior_to: str,
+) -> Path:
+    """Generate a hash-pinned ``pylock.toml`` for the project's dependencies.
+
+    A thin wrapper around ``pip lock`` (pip >= 25.1) — this doesn't resolve
+    or hash anything itself. Run through *python_bin*, the same bundled
+    python-build-standalone interpreter the real build installs into, so
+    the resolved wheels/hashes match that exact platform and Python build
+    rather than whatever the developer's own interpreter would resolve.
+    ``--only-deps`` on the local project (via ``base`` inside
+    ``install_targets``) excludes it from the lock — it has no stable hash
+    to pin between source edits and is installed separately, from trusted
+    local source, by ``_install_from_pylock``. ``appimage_pin`` and
+    ``config.packages`` are real PyPI distributions, though, and stay in
+    the lock with their own hash like any other dependency.
+    """
+    major, minor = _pip_version(python_bin)
+    if (major, minor) < _MIN_PIP_LOCK_VERSION:
+        msg = (
+            f"Bundled pip {major}.{minor} does not support 'pip lock' "
+            f"(needs >= {_MIN_PIP_LOCK_VERSION[0]}.{_MIN_PIP_LOCK_VERSION[1]}). "
+            "Pin a newer python_date and retry."
+        )
+        raise RuntimeError(msg)
+
+    pylock_path = project_root / (resolved.pylock or "pylock.toml")
+    cmd = [
+        str(python_bin), "-m", "pip", "lock",
+        *resolved.install_targets, "--only-deps", "-o", str(pylock_path),
+    ]
+    if uploaded_prior_to:
+        cmd += ["--uploaded-prior-to", uploaded_prior_to]
+
+    _log.info("Generating %s...", pylock_path)
+    subprocess.run(cmd, cwd=project_root, check=True)  # noqa: S603  # nosec B603
+    _log.info("Done: %s", pylock_path)
+    return pylock_path
+
+
+def lock(config: BuildConfig, project_root: Path, *, uploaded_prior_to: str = "") -> None:
+    """Resolve the bundled Python and generate a hash-pinned ``pylock.toml``.
+
+    Extracts the same python-build-standalone interpreter a real build
+    would use into ``<build_dir>/AppDir`` (overwriting it, same as
+    ``build()`` does — nothing there survives past the next real build
+    anyway) purely to run ``pip lock`` through it, then writes ``pylock``
+    into ``[tool.appimage.build]`` if not already set, the same way
+    ``--init`` writes its own auto-detected fields.
+
+    Parameters
+    ----------
+    config : BuildConfig
+        Explicit configuration already loaded from ``pyproject.toml``.
+    project_root : Path
+        Project root directory.
+    uploaded_prior_to : str
+        Optional ``pip lock --uploaded-prior-to`` cooldown window (ISO 8601
+        ``PnD`` format, e.g. ``"P7D"``) — excludes packages published more
+        recently than that from the resolution, giving the community time
+        to catch a compromised release before it gets locked in. Applies
+        only to this resolution step; irrelevant once pylock.toml exists,
+        since the real build then installs exactly what's already pinned.
+
+    Raises
+    ------
+    SystemExit
+        If the resolved configuration has errors that prevent building.
+
+    """
+    resolved = _resolve(config, project_root)
+    _format_check(resolved)
+    if resolved.errors:
+        raise SystemExit(1)
+
+    arch = platform.machine()
+    build_dir = project_root / resolved.build_dir
+    appdir = build_dir / "AppDir"
+    python_cache = build_dir / "python.tar.gz"
+
+    if appdir.exists():
+        shutil.rmtree(appdir)
+    appdir.mkdir(parents=True)
+
+    python_tarball = _resolve_python_tarball(resolved, python_cache, arch)
+    _log.info("Extracting Python...")
+    with tarfile.open(python_tarball) as tar:
+        tar.extractall(appdir)  # noqa: S202  # nosec B202
+    python_bin = appdir / "python" / "bin" / "python3"
+
+    pylock_path = _generate_lock(
+        resolved, python_bin, project_root, uploaded_prior_to=uploaded_prior_to,
+    )
+
+    pyproject_path = project_root / "pyproject.toml"
+    with pyproject_path.open("rb") as f:
+        data = tomllib.load(f)
+    existing = set(data.get("tool", {}).get("appimage", {}).get("build", {}).keys())
+    if "pylock" not in existing:
+        rel = pylock_path.relative_to(project_root)
+        content = pyproject_path.read_text()
+        line = f'pylock = "{rel}"\n'
+        if "[tool.appimage.build]" in content:
+            content = content.replace("[tool.appimage.build]", f"[tool.appimage.build]\n{line}", 1)
+        else:
+            content += f"\n[tool.appimage.build]\n{line}\n"
+        pyproject_path.write_text(content)
+        _log.info("")
+        _log.info("Added to pyproject.toml: pylock = %s", _toml_value(str(rel)))
+
+
 def _resolve_appimagetool(
     resolved: _ResolvedBuild,
     appimagetool_cache: Path,
@@ -1271,6 +1478,48 @@ def _resolve_runtime_file(
     return runtime
 
 
+def _install_from_pylock(
+    resolved: _ResolvedBuild,
+    python_bin: Path,
+    project_root: Path,
+) -> None:
+    """Install the local project unhashed, then its dependencies hash-verified.
+
+    ``pylock.toml`` (generated by ``--lock``) pins every third-party
+    dependency — not the local project itself, deliberately excluded via
+    ``--only-deps`` at generation time since it has no stable hash to pin
+    against between source edits. Split into two ``pip install`` calls
+    because pip's hash-checking mode, once triggered by any ``--hash``
+    in a requirement set, demands *every* requirement in that same
+    invocation carry one — mixing the unhashed local project into the
+    ``--require-hashes`` call would fail outright. ``--no-deps`` on both
+    calls keeps each strictly to what it's given: the local install won't
+    reach past its own listed dependencies, and the lock install won't
+    silently pull in anything beyond what got hashed.
+    """
+    pylock_path = project_root / resolved.pylock
+    if not pylock_path.exists():
+        msg = f"pylock file not found: {pylock_path}. Run --lock to generate it."
+        raise FileNotFoundError(msg)
+
+    _log.info("Installing project (unverified, own source): %s", " ".join(resolved.local_install_targets))
+    subprocess.run(  # noqa: S603  # nosec B603
+        [str(python_bin), "-m", "pip", "install", "--no-compile", "--no-deps", *resolved.local_install_targets],
+        cwd=project_root,
+        check=True,
+    )
+
+    _log.info("Installing dependencies (hash-verified): %s", pylock_path)
+    subprocess.run(  # noqa: S603  # nosec B603
+        [
+            str(python_bin), "-m", "pip", "install", "--no-compile", "--no-deps",
+            "--require-hashes", "-r", str(pylock_path),
+        ],
+        cwd=project_root,
+        check=True,
+    )
+
+
 def _prepare_python(
     resolved: _ResolvedBuild,
     python_tarball: Path,
@@ -1283,12 +1532,16 @@ def _prepare_python(
         tar.extractall(appdir)  # noqa: S202  # nosec B202
 
     python_bin = appdir / "python" / "bin" / "python3"
-    _log.info("Installing packages: %s", " ".join(resolved.install_targets))
-    subprocess.run(  # noqa: S603  # nosec B603
-        [str(python_bin), "-m", "pip", "install", "--no-compile", *resolved.install_targets],
-        cwd=project_root,
-        check=True,
-    )
+
+    if resolved.pylock:
+        _install_from_pylock(resolved, python_bin, project_root)
+    else:
+        _log.info("Installing packages: %s", " ".join(resolved.install_targets))
+        subprocess.run(  # noqa: S603  # nosec B603
+            [str(python_bin), "-m", "pip", "install", "--no-compile", *resolved.install_targets],
+            cwd=project_root,
+            check=True,
+        )
 
     if hook := resolved.hooks.get("post_install"):
         _log.info("Running post_install hook...")

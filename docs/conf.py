@@ -11,6 +11,7 @@ extensions = [
 ]
 
 myst_enable_extensions = ["colon_fence"]
+myst_heading_anchors = 3
 
 html_theme = "sphinx_rtd_theme"
 html_logo = "_static/appimage.png"

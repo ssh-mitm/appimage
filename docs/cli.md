@@ -13,6 +13,7 @@ appimage-build [OPTIONS]
 |---|---|
 | `--check` | Show detected build configuration and exit without building. |
 | `--init` | Write auto-detected values to `[tool.appimage.build]` in `pyproject.toml` (only missing keys). May resolve appimagetool and the runtime file (possibly downloading them, ~8 MB + ~1 MB) to also write `appimagetool_version`/`appimagetool_sha256`/`runtime_sha256` when not already set. |
+| `--lock` | Generate a hash-pinned `pylock.toml` for third-party dependencies and exit — a thin wrapper around `pip lock`, run through the bundled interpreter (see [Verified dependencies](reproducible-builds.md#verified-dependencies)). Writes `pylock` to `pyproject.toml` if not already set. |
 | `--app NAME` | Override the application name. |
 | `--entry-point EP` | Override the console script entry point. |
 | `--python VERSION` | Override the Python version to bundle (e.g. `3.13`). |
@@ -29,7 +30,10 @@ appimage-build [OPTIONS]
 | `--runtime-sha256 SHA256` | Expected sha256 of the runtime file, verified regardless of how it was resolved. |
 | `--verify-downloads` | Abort the build instead of warning whenever appimagetool, the runtime file, or the Python archive would otherwise be used unverified. |
 | `--require-zsyncmake` | Abort the build instead of warning when `update_info` is set but `zsyncmake` is not on `PATH`. |
-| `--reproducible` | Shortcut for a build that's reproducible across machines and over time: implies `--verify-downloads` and `--require-zsyncmake`, and requires `python_date`/`appimagetool_sha256`/`runtime_sha256` to already be set (run `--init` first). Does not resolve or write any values itself. |
+| `--pylock PATH` | Path to a hash-pinned `pylock.toml` for third-party dependencies. Generate it with `--lock`. |
+| `--require-pylock` | Abort the build instead of warning when `pylock` is not set. |
+| `--uploaded-prior-to PnD` | Only used with `--lock`: passed through to `pip lock --uploaded-prior-to` as a cooldown window (e.g. `P7D` excludes packages published in the last 7 days) — gives the community time to catch a compromised release before it gets locked in. |
+| `--reproducible` | Shortcut for a build that's reproducible across machines and over time: implies `--verify-downloads` and `--require-zsyncmake`, and requires `python_date`/`appimagetool_sha256`/`runtime_sha256` to already be set (run `--init` first). Does not resolve or write any values itself. Independent of `--pylock`/`--require-pylock` — opt into dependency hash-pinning separately. |
 
 ### Examples
 
@@ -71,4 +75,11 @@ python -m appimage.build --verify-downloads
 # Pin everything once, then enforce full cross-machine reproducibility on every build
 python -m appimage.build --init
 python -m appimage.build --reproducible
+
+# Generate a hash-pinned pylock.toml for dependencies, then build against it
+python -m appimage.build --lock
+python -m appimage.build --require-pylock
+
+# Regenerate the lock with a 7-day cooldown, excluding just-published releases
+python -m appimage.build --lock --uploaded-prior-to P7D
 ```

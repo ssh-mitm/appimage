@@ -11,7 +11,7 @@ All options go in `[tool.appimage.build]` inside `pyproject.toml`. Every key is 
 | `python` | `requires-python` | Python minor version to bundle, e.g. `"3.11"`. |
 | `python_date` | *(latest)* | python-build-standalone release date for reproducible builds (e.g. `"20260211"`). |
 | `extras` | `[]` | Extras to install from the current package, e.g. `["production"]` → `pip install ".[production]"`. |
-| `packages` | `[]` | Additional pip install targets beyond the current package. |
+| `packages` | `[]` | Additional pip install targets beyond the current package. Resolved by whatever pip picks up from the environment — see [Private package indexes](reproducible-builds.md#private-package-indexes-artifactory-nexus-devpi-) for pointing this at an internal mirror. |
 | `icon` | auto-detected, then built-in default | Path to the icon file, relative to the project root. |
 | `desktop` | auto-detected, then generated | Path to the `.desktop` file, relative to the project root. |
 | `apprun` | *(generated)* | Path to a custom AppRun script. |
@@ -27,7 +27,9 @@ All options go in `[tool.appimage.build]` inside `pyproject.toml`. Every key is 
 | `runtime_sha256` | — | Expected sha256 of the runtime file, verified the same way as `appimagetool_sha256`. |
 | `verify_downloads` | `false` | Abort the build instead of warning whenever appimagetool, the runtime file, or the Python archive would otherwise be used unverified. |
 | `require_zsyncmake` | `false` | Abort the build instead of warning when `update_info` is set but `zsyncmake` is not on `PATH` (no `.zsync` delta-update file would be generated). No effect when `update_info` is empty. |
-| `reproducible` | `false` | Shortcut for a build that's reproducible across machines and over time: implies `verify_downloads` and `require_zsyncmake`, and additionally requires `python_date`, `appimagetool_sha256`, and `runtime_sha256` to already be set — resolving those three fresh on every build is exactly what defeats cross-machine reproducibility. Run `--init` first to write them; `reproducible` itself never resolves or writes values. |
+| `pylock` | — | Path to a hash-pinned `pylock.toml`, relative to the project root. When set, third-party dependencies are installed with `pip install --require-hashes` instead of a live, unverified resolution. Generate it with `--lock` — see [Verified dependencies](reproducible-builds.md#verified-dependencies). |
+| `require_pylock` | `false` | Abort the build instead of warning when `pylock` is not set. |
+| `reproducible` | `false` | Shortcut for a build that's reproducible across machines and over time: implies `verify_downloads` and `require_zsyncmake`, and additionally requires `python_date`, `appimagetool_sha256`, and `runtime_sha256` to already be set — resolving those three fresh on every build is exactly what defeats cross-machine reproducibility. Run `--init` first to write them; `reproducible` itself never resolves or writes values. Deliberately independent of `pylock`/`require_pylock` — dependency hash-pinning and byte-identical output are separate concerns; opt into both explicitly. |
 
 ## Environment variables in AppRun
 

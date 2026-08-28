@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Final
 
-from appimage.build import BuildConfig, build, check, write_config
+from appimage.build import BuildConfig, build, check, lock, write_config
 
 
 def _parse_args() -> argparse.Namespace:
@@ -34,6 +34,15 @@ def _parse_args() -> argparse.Namespace:
         "--init",
         action="store_true",
         help="Write auto-detected values to pyproject.toml and exit.",
+    )
+    mode.add_argument(
+        "--lock",
+        action="store_true",
+        help=(
+            "Generate a hash-pinned pylock.toml for third-party dependencies "
+            "(via 'pip lock', run through the bundled interpreter) and exit. "
+            "Writes 'pylock' to pyproject.toml if not already set."
+        ),
     )
 
     parser.add_argument(
@@ -164,6 +173,35 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--pylock",
+        dest="pylock",
+        metavar="PATH",
+        help=(
+            "Path to a hash-pinned pylock.toml for third-party dependencies "
+            "(overrides pyproject.toml). Generate it with --lock."
+        ),
+    )
+    parser.add_argument(
+        "--require-pylock",
+        dest="require_pylock",
+        action="store_true",
+        help=(
+            "Abort the build if pylock is not set (dependencies would "
+            "otherwise be installed unverified), instead of just warning."
+        ),
+    )
+    parser.add_argument(
+        "--uploaded-prior-to",
+        dest="uploaded_prior_to",
+        metavar="PnD",
+        help=(
+            "Only used with --lock: passed through to 'pip lock "
+            "--uploaded-prior-to' as a cooldown window (ISO 8601 PnD "
+            "format, e.g. P7D) — excludes packages published more "
+            "recently than that from the resolution."
+        ),
+    )
+    parser.add_argument(
         "--reproducible",
         dest="reproducible",
         action="store_true",
@@ -194,6 +232,8 @@ _CLI_OVERRIDE_FIELDS: Final = (
     "runtime_sha256",
     "verify_downloads",
     "require_zsyncmake",
+    "pylock",
+    "require_pylock",
     "reproducible",
 )
 
@@ -229,6 +269,8 @@ def main() -> None:
             sys.exit(0 if ok else 1)
         elif args.init:
             write_config(config, project_root)
+        elif args.lock:
+            lock(config, project_root, uploaded_prior_to=args.uploaded_prior_to or "")
         else:
             build(config, project_root)
     except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
