@@ -28,6 +28,8 @@ appimage-build [OPTIONS]
 | `--runtime-file PATH` | Path to a local AppImage runtime ELF stub, passed to appimagetool as `--runtime-file`. Skips the download. |
 | `--runtime-sha256 SHA256` | Expected sha256 of the runtime file, verified regardless of how it was resolved. |
 | `--verify-downloads` | Abort the build instead of warning whenever appimagetool, the runtime file, or the Python archive would otherwise be used unverified. |
+| `--require-zsyncmake` | Abort the build instead of warning when `update_info` is set but `zsyncmake` is not on `PATH`. |
+| `--reproducible` | Shortcut for a build that's reproducible across machines and over time: implies `--verify-downloads` and `--require-zsyncmake`, and requires `python_date`/`appimagetool_sha256`/`runtime_sha256` to already be set (run `--init` first). Does not resolve or write any values itself. |
 
 ### Examples
 
@@ -65,4 +67,8 @@ python -m appimage.build --python-date 20260211
 
 # Fail loudly instead of warning if anything ends up unverified
 python -m appimage.build --verify-downloads
+
+# Pin everything once, then enforce full cross-machine reproducibility on every build
+python -m appimage.build --init
+python -m appimage.build --reproducible
 ```

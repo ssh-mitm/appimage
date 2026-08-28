@@ -99,6 +99,14 @@ unverified resolution a hard error instead of a warning, for release
 builds where "give me the exact bits I asked for, or fail" matters more
 than convenience.
 
+Run `python -m appimage.build --reproducible` (after `--init` has written
+the pins) as a shortcut that enforces all of the above at once: it implies
+`verify_downloads` and `require_zsyncmake` (see
+[configuration.md](configuration.md)), and refuses to build at all if
+`python_date`, `appimagetool_sha256`, or `runtime_sha256` is still unset —
+since resolving any of those three fresh on every build is exactly what
+defeats cross-machine reproducibility in the first place.
+
 ## Not covered here
 
 This page is about the AppImages `appimage.build` produces for *your*

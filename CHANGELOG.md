@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `verify_downloads` config key / `--verify-downloads` CLI flag: abort the build instead of warning when appimagetool, the runtime file, or the Python archive would be used unverified
 - `python_sha256` config key / `--python-sha256` CLI option: verify the python-build-standalone tarball's sha256
 - `--init` now also resolves and pins appimagetool and the runtime file when not already configured
+- `require_zsyncmake` config key / `--require-zsyncmake` CLI flag: abort the build instead of warning when `update_info` is set but `zsyncmake` is not on `PATH` — previously a missing `zsyncmake` only produced appimagetool's own easy-to-miss stderr line, with no `.zsync` delta-update file and no build failure. Surfaced during `--check` too, not just at packaging time
+- `reproducible` config key / `--reproducible` CLI flag: shortcut that implies `verify_downloads` and `require_zsyncmake`, and additionally requires `python_date`, `appimagetool_sha256`, and `runtime_sha256` to already be set — the three values that must be pinned (e.g. via `--init`) for a build to be reproducible across machines and over time, not just within one build environment
 - Hash-pinned build dependencies (`requirements-build.txt`, `packaging/update-requirements.sh`, `packaging/verify-reproducible-build.sh`) and a bit-for-bit reproducibility proof for this package's own PyPI wheel — see `docs/reproducible-builds.md`
 - `tests/test_build.py`: first unit test coverage for the build module
 

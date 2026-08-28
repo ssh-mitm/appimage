@@ -158,6 +158,20 @@ class BuildConfig:
         and no digest published by GitHub for that resolution path — e.g. a
         ``PATH``-found or cached binary) aborts the build instead of
         logging a warning and continuing.
+    require_zsyncmake : bool
+        When true, abort the build if ``update_info`` is set but
+        ``zsyncmake`` is not found on ``PATH`` — instead of logging a
+        warning and packaging an AppImage with no ``.zsync`` delta-update
+        file. Has no effect when ``update_info`` is empty.
+    reproducible : bool
+        Shortcut that sets every option needed for a build that is
+        reproducible across machines and over time, not just within the
+        current build environment: implies ``verify_downloads`` and
+        ``require_zsyncmake``, and additionally requires ``python_date``,
+        ``appimagetool_sha256``, and ``runtime_sha256`` to already be set
+        — resolving those three fresh on every build is exactly what
+        defeats cross-machine reproducibility (see
+        docs/reproducible-builds.md). Run ``--init`` first to write them.
 
     """
 
@@ -184,6 +198,8 @@ class BuildConfig:
     runtime_file: str = ""
     runtime_sha256: str = ""
     verify_downloads: bool = False
+    require_zsyncmake: bool = False
+    reproducible: bool = False
 
     @classmethod
     def from_pyproject(cls, project_root: Path) -> "BuildConfig":
@@ -239,6 +255,8 @@ class BuildConfig:
             runtime_file=cfg.get("runtime_file", ""),
             runtime_sha256=cfg.get("runtime_sha256", ""),
             verify_downloads=cfg.get("verify_downloads", False),
+            require_zsyncmake=cfg.get("require_zsyncmake", False),
+            reproducible=cfg.get("reproducible", False),
         )
 
 
@@ -268,6 +286,8 @@ class _ResolvedBuild:
     runtime_file: str
     runtime_sha256: str
     verify_downloads: bool
+    require_zsyncmake: bool
+    reproducible: bool
     sources: dict[str, str]
     warnings: list[str]
     errors: list[str]
@@ -510,6 +530,24 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         "[tool.appimage.build]" if config.dist_dir != "dist" else "default"
     )
 
+    verify_downloads = config.verify_downloads or config.reproducible
+    require_zsyncmake = config.require_zsyncmake or config.reproducible
+    if config.reproducible:
+        errors.extend(
+            f"reproducible requires {key} to be set in "
+            "[tool.appimage.build] — run --init to resolve and write it."
+            for key in ("python_date", "appimagetool_sha256", "runtime_sha256")
+            if not getattr(config, key)
+        )
+
+    if config.update_info and not shutil.which("zsyncmake"):
+        zsyncmake_msg = (
+            "update_info is set but zsyncmake is not on PATH — no .zsync "
+            "delta-update file will be generated. Install the 'zsync' package "
+            "(provides zsyncmake), or unset update_info."
+        )
+        (errors if require_zsyncmake else warnings).append(zsyncmake_msg)
+
     return _ResolvedBuild(
         app=app,
         entry_point=entry_point,
@@ -532,7 +570,9 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         python_sha256=config.python_sha256,
         runtime_file=config.runtime_file,
         runtime_sha256=config.runtime_sha256,
-        verify_downloads=config.verify_downloads,
+        verify_downloads=verify_downloads,
+        require_zsyncmake=require_zsyncmake,
+        reproducible=config.reproducible,
         sources=sources,
         warnings=warnings,
         errors=errors,
@@ -564,8 +604,12 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         ("runtime_sha256", resolved.runtime_sha256),
     ]
     rows = [(name, value, cfg) for name, value in candidates if value]
+    if resolved.reproducible:
+        rows.append(("reproducible", "true", cfg))
     if resolved.verify_downloads:
         rows.append(("verify_downloads", "true", cfg))
+    if resolved.require_zsyncmake:
+        rows.append(("require_zsyncmake", "true", cfg))
     return rows
 
 

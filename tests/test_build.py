@@ -13,8 +13,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from appimage.build import (
+    BuildConfig,
     _ResolvedBuild,
     _normalize_mtimes,
+    _resolve,
     _resolve_appimagetool,
     _resolve_python_tarball,
     _resolve_python_url,
@@ -55,6 +57,8 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "runtime_file": "",
         "runtime_sha256": "",
         "verify_downloads": False,
+        "require_zsyncmake": False,
+        "reproducible": False,
         "sources": {},
         "warnings": [],
         "errors": [],
@@ -376,6 +380,124 @@ def test_verify_downloads_passes_when_hash_configured(tmp_path: Path) -> None:
     result = _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
 
     assert result == tool
+
+
+# ---------------------------------------------------------------------------
+# zsyncmake availability (checked in _resolve, so --check sees it too)
+# ---------------------------------------------------------------------------
+
+def _write_minimal_project(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+    )
+
+
+def _has_zsyncmake_message(messages: list[str]) -> bool:
+    return any("zsyncmake is not on PATH" in m for m in messages)
+
+
+def test_zsyncmake_noop_without_update_info(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    with patch("appimage.build.shutil.which", return_value=None):
+        resolved = _resolve(config, tmp_path)
+
+    assert not _has_zsyncmake_message(resolved.warnings)
+    assert resolved.errors == []
+
+
+def test_zsyncmake_noop_when_found(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(update_info="zsync|https://example/app.AppImage.zsync")
+
+    with patch("appimage.build.shutil.which", return_value="/usr/bin/zsyncmake"):
+        resolved = _resolve(config, tmp_path)
+
+    assert not _has_zsyncmake_message(resolved.warnings)
+    assert resolved.errors == []
+
+
+def test_zsyncmake_warns_by_default(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(update_info="zsync|https://example/app.AppImage.zsync")
+
+    with patch("appimage.build.shutil.which", return_value=None):
+        resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert _has_zsyncmake_message(resolved.warnings)
+
+
+def test_zsyncmake_errors_with_require_zsyncmake(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(
+        update_info="zsync|https://example/app.AppImage.zsync", require_zsyncmake=True,
+    )
+
+    with patch("appimage.build.shutil.which", return_value=None):
+        resolved = _resolve(config, tmp_path)
+
+    assert not _has_zsyncmake_message(resolved.warnings)
+    assert _has_zsyncmake_message(resolved.errors)
+
+
+def test_zsyncmake_warns_not_errors_with_verify_downloads_alone(tmp_path: Path) -> None:
+    """verify_downloads is independent of require_zsyncmake — only warns."""
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(
+        update_info="zsync|https://example/app.AppImage.zsync", verify_downloads=True,
+    )
+
+    with patch("appimage.build.shutil.which", return_value=None):
+        resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert any("zsyncmake is not on PATH" in w for w in resolved.warnings)
+
+
+# ---------------------------------------------------------------------------
+# reproducible (umbrella flag)
+# ---------------------------------------------------------------------------
+
+def test_reproducible_errors_when_pins_missing(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(reproducible=True)
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.verify_downloads is True
+    assert resolved.require_zsyncmake is True
+    assert any("python_date" in e for e in resolved.errors)
+    assert any("appimagetool_sha256" in e for e in resolved.errors)
+    assert any("runtime_sha256" in e for e in resolved.errors)
+
+
+def test_reproducible_passes_when_pins_set(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(
+        reproducible=True,
+        python_date="20260211",
+        appimagetool_sha256=digest_of(b"tool"),
+        runtime_sha256=digest_of(b"runtime"),
+    )
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert resolved.verify_downloads is True
+    assert resolved.require_zsyncmake is True
+
+
+def test_reproducible_false_does_not_require_pins(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert resolved.verify_downloads is False
+    assert resolved.require_zsyncmake is False
 
 
 # ---------------------------------------------------------------------------

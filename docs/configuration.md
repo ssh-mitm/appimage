@@ -26,6 +26,8 @@ All options go in `[tool.appimage.build]` inside `pyproject.toml`. Every key is 
 | `runtime_file` | — | Path to a local AppImage runtime ELF stub, passed to appimagetool as `--runtime-file`. When omitted, the build cache is checked first, then a download — pre-fetching it this way avoids appimagetool's own live, unverified download at packaging time. |
 | `runtime_sha256` | — | Expected sha256 of the runtime file, verified the same way as `appimagetool_sha256`. |
 | `verify_downloads` | `false` | Abort the build instead of warning whenever appimagetool, the runtime file, or the Python archive would otherwise be used unverified. |
+| `require_zsyncmake` | `false` | Abort the build instead of warning when `update_info` is set but `zsyncmake` is not on `PATH` (no `.zsync` delta-update file would be generated). No effect when `update_info` is empty. |
+| `reproducible` | `false` | Shortcut for a build that's reproducible across machines and over time: implies `verify_downloads` and `require_zsyncmake`, and additionally requires `python_date`, `appimagetool_sha256`, and `runtime_sha256` to already be set — resolving those three fresh on every build is exactly what defeats cross-machine reproducibility. Run `--init` first to write them; `reproducible` itself never resolves or writes values. |
 
 ## Environment variables in AppRun
 

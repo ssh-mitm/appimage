@@ -153,6 +153,28 @@ def _parse_args() -> argparse.Namespace:
             "warning."
         ),
     )
+    parser.add_argument(
+        "--require-zsyncmake",
+        dest="require_zsyncmake",
+        action="store_true",
+        help=(
+            "Abort the build if update_info is set but zsyncmake is not on "
+            "PATH (no .zsync delta-update file would be generated), instead "
+            "of just warning."
+        ),
+    )
+    parser.add_argument(
+        "--reproducible",
+        dest="reproducible",
+        action="store_true",
+        help=(
+            "Shortcut for a build that is reproducible across machines and "
+            "over time: implies --verify-downloads and --require-zsyncmake, "
+            "and requires python_date, appimagetool_sha256, and "
+            "runtime_sha256 to already be set (run --init first to write "
+            "them). Does not resolve or write any values itself."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -171,6 +193,8 @@ _CLI_OVERRIDE_FIELDS: Final = (
     "runtime_file",
     "runtime_sha256",
     "verify_downloads",
+    "require_zsyncmake",
+    "reproducible",
 )
 
 
