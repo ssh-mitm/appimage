@@ -1,6 +1,7 @@
 # Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
 """Build an AppImage from a Python project configured via pyproject.toml."""
 
+import hashlib
 import importlib.metadata
 import importlib.resources
 import json
@@ -26,13 +27,40 @@ _ARCH_MAP: Final[dict[str, str]] = {
     "armv7l": "armv7",
 }
 
+# appimagetool/type2-runtime use different architecture tags than
+# python-build-standalone for the same physical hardware (e.g. "armhf"
+# rather than "armv7").
+_APPIMAGETOOL_ARCH_MAP: Final[dict[str, str]] = {
+    "x86_64": "x86_64",
+    "aarch64": "aarch64",
+    "armv7l": "armhf",
+}
+
 _PBS_API: Final = (
     "https://api.github.com/repos/astral-sh/python-build-standalone/releases"
 )
-_APPIMAGETOOL_URL: Final = (
-    "https://github.com/AppImage/AppImageKit/releases/download/continuous"
-    "/appimagetool-{arch}.AppImage"
-)
+
+# AppImage/AppImageKit's classic C appimagetool is no longer maintained (its
+# bundled mksquashfs has a documented non-deterministic multi-threaded
+# compression bug, see https://github.com/AppImage/AppImageKit/issues/929)
+# and its own release notes now point downloads at this successor instead.
+# It bundles a modern, fixed squashfs-tools and — unlike AppImageKit's
+# "continuous" release — publishes a sha256 digest per asset via the
+# GitHub API, so it doubles as the source for the free-verification
+# digest used when appimagetool_sha256 is not explicitly configured.
+_APPIMAGETOOL_REPO: Final = "AppImage/appimagetool"
+_APPIMAGETOOL_ASSET: Final = "appimagetool-{arch}.AppImage"
+
+# The runtime ELF stub that appimagetool prepends to the squashfs image.
+# Newer appimagetool versions download this at packaging time instead of
+# bundling it, which both defeats verification (nothing checks what was
+# fetched) and hangs in network environments where the tool's bundled
+# libcurl can't complete the download (e.g. behind certain TLS-intercepting
+# proxies) — pre-fetching and pinning it here avoids both problems.
+_RUNTIME_REPO: Final = "AppImage/type2-runtime"
+_RUNTIME_ASSET: Final = "runtime-{arch}"
+
+_GITHUB_RELEASE_TAG_API: Final = "https://api.github.com/repos/{repo}/releases/tags/{tag}"
 
 _ICON_SEARCH_DIRS: Final = (".", "appimage", "assets", "packaging", "data", "icons")
 _ICON_EXTENSIONS: Final = (".png", ".svg")
@@ -93,9 +121,43 @@ class BuildConfig:
     appimagetool : str
         Path to a local appimagetool binary. When empty, the tool is looked up
         in ``PATH``, then in the build cache, and finally downloaded.
+    appimagetool_version : str
+        Informational label recording which appimagetool build
+        ``appimagetool_sha256`` corresponds to (e.g. its own ``--version``
+        banner). Not used to select a download — AppImageKit's ``continuous``
+        release has no addressable historical versions — purely a
+        human-readable record of what the pinned hash means. Written
+        automatically by ``--init`` alongside the hash.
+    appimagetool_sha256 : str
+        Expected sha256 of the appimagetool binary. When set, verified
+        against whichever binary is resolved (explicit path, ``PATH``, build
+        cache, or download) — a mismatch aborts the build. When empty,
+        appimagetool is used unverified, whatever is currently resolved.
     python_archive : str
         Path to a local python-build-standalone tarball. When empty, the
         archive is looked up in the build cache and then downloaded.
+    python_sha256 : str
+        Expected sha256 of the python-build-standalone tarball. Fresh
+        downloads are also verified against the digest GitHub publishes per
+        release asset even when this is empty; set explicitly to also verify
+        a local ``python_archive`` or a cached tarball.
+    runtime_file : str
+        Path to a local AppImage runtime ELF stub, passed to appimagetool as
+        ``--runtime-file``. When empty, it is looked up in the build cache
+        and then downloaded — pre-fetching it this way (rather than letting
+        appimagetool download it itself at packaging time) makes it
+        verifiable and avoids hangs in network environments where
+        appimagetool's bundled libcurl cannot complete the download.
+    runtime_sha256 : str
+        Expected sha256 of the runtime file. Fresh downloads are also
+        verified against the digest GitHub publishes per release asset even
+        when this is empty.
+    verify_downloads : bool
+        When true, any of appimagetool, the runtime file, or the Python
+        archive that would otherwise be used unverified (no configured hash
+        and no digest published by GitHub for that resolution path — e.g. a
+        ``PATH``-found or cached binary) aborts the build instead of
+        logging a warning and continuing.
 
     """
 
@@ -115,7 +177,13 @@ class BuildConfig:
     extra_files: dict[str, str] = field(default_factory=dict)
     hooks: dict[str, str] = field(default_factory=dict)
     appimagetool: str = ""
+    appimagetool_version: str = ""
+    appimagetool_sha256: str = ""
     python_archive: str = ""
+    python_sha256: str = ""
+    runtime_file: str = ""
+    runtime_sha256: str = ""
+    verify_downloads: bool = False
 
     @classmethod
     def from_pyproject(cls, project_root: Path) -> "BuildConfig":
@@ -164,7 +232,13 @@ class BuildConfig:
             extra_files=cfg.get("extra_files", {}),
             hooks=cfg.get("hooks", {}),
             appimagetool=cfg.get("appimagetool", ""),
+            appimagetool_version=cfg.get("appimagetool_version", ""),
+            appimagetool_sha256=cfg.get("appimagetool_sha256", ""),
             python_archive=cfg.get("python_archive", ""),
+            python_sha256=cfg.get("python_sha256", ""),
+            runtime_file=cfg.get("runtime_file", ""),
+            runtime_sha256=cfg.get("runtime_sha256", ""),
+            verify_downloads=cfg.get("verify_downloads", False),
         )
 
 
@@ -187,7 +261,13 @@ class _ResolvedBuild:
     extra_files: dict[str, str]
     hooks: dict[str, str]
     appimagetool: str
+    appimagetool_version: str
+    appimagetool_sha256: str
     python_archive: str
+    python_sha256: str
+    runtime_file: str
+    runtime_sha256: str
+    verify_downloads: bool
     sources: dict[str, str]
     warnings: list[str]
     errors: list[str]
@@ -446,7 +526,13 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         extra_files=config.extra_files,
         hooks=config.hooks,
         appimagetool=config.appimagetool,
+        appimagetool_version=config.appimagetool_version,
+        appimagetool_sha256=config.appimagetool_sha256,
         python_archive=config.python_archive,
+        python_sha256=config.python_sha256,
+        runtime_file=config.runtime_file,
+        runtime_sha256=config.runtime_sha256,
+        verify_downloads=config.verify_downloads,
         sources=sources,
         warnings=warnings,
         errors=errors,
@@ -470,9 +556,17 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         ("update_info", resolved.update_info),
         ("python_date", resolved.python_date),
         ("python_archive", resolved.python_archive),
+        ("python_sha256", resolved.python_sha256),
         ("appimagetool", resolved.appimagetool),
+        ("appimagetool_version", resolved.appimagetool_version),
+        ("appimagetool_sha256", resolved.appimagetool_sha256),
+        ("runtime_file", resolved.runtime_file),
+        ("runtime_sha256", resolved.runtime_sha256),
     ]
-    return [(name, value, cfg) for name, value in candidates if value]
+    rows = [(name, value, cfg) for name, value in candidates if value]
+    if resolved.verify_downloads:
+        rows.append(("verify_downloads", "true", cfg))
+    return rows
 
 
 def _format_check(resolved: _ResolvedBuild) -> None:
@@ -559,11 +653,79 @@ def check(config: BuildConfig, project_root: Path) -> bool:
     return not resolved.errors
 
 
+def _appimagetool_version_string(tool: Path) -> str:
+    """Return appimagetool's own ``--version`` banner as a human-readable label."""
+    result = subprocess.run(  # noqa: S603  # nosec B603
+        [str(tool), "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (result.stderr or result.stdout).strip()
+
+
+def _auto_detected_fields(
+    resolved: _ResolvedBuild,
+    project_root: Path,
+    existing: set[str],
+) -> dict[str, object]:
+    """Return auto-detected app/entry_point/python/icon/desktop values to add."""
+    new: dict[str, object] = {}
+    if "app" not in existing:
+        new["app"] = resolved.app
+    if "entry_point" not in existing:
+        new["entry_point"] = resolved.entry_point
+    if "python" not in existing:
+        new["python"] = resolved.python
+    if "icon" not in existing and resolved.icon is not None and resolved.icon != _DEFAULT_ICON:
+        new["icon"] = str(resolved.icon.relative_to(project_root))
+    if "desktop" not in existing and resolved.desktop is not None:
+        new["desktop"] = str(resolved.desktop.relative_to(project_root))
+    return new
+
+
+def _pinned_download_fields(
+    resolved: _ResolvedBuild,
+    project_root: Path,
+    existing: set[str],
+) -> dict[str, object]:
+    """Resolve appimagetool/runtime and return their pin fields to add.
+
+    Only resolves what isn't already configured; may trigger downloads.
+    """
+    new: dict[str, object] = {}
+    arch = platform.machine()
+    build_dir = project_root / resolved.build_dir
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    if "appimagetool_version" not in existing and "appimagetool_sha256" not in existing:
+        appimagetool_cache = build_dir / f"appimagetool-{arch}.AppImage"
+        tool = _resolve_appimagetool(resolved, appimagetool_cache, arch)
+        new["appimagetool_version"] = _appimagetool_version_string(tool)
+        new["appimagetool_sha256"] = _sha256_file(tool)
+
+    if "runtime_sha256" not in existing:
+        runtime_cache = build_dir / f"runtime-{arch}"
+        runtime = _resolve_runtime_file(resolved, runtime_cache, arch)
+        new["runtime_sha256"] = _sha256_file(runtime)
+
+    return new
+
+
 def write_config(config: BuildConfig, project_root: Path) -> None:
     """Write auto-detected values to ``pyproject.toml``.
 
     Only fields that are not already explicitly set in ``[tool.appimage.build]``
     are written. Existing values are never overwritten.
+
+    When ``appimagetool_version``/``appimagetool_sha256`` are not already
+    configured, this also resolves appimagetool (via the same lookup order
+    as a real build — explicit path, ``PATH``, build cache, or download) and
+    writes its sha256 and self-reported version banner, so a subsequent
+    build can pin against exactly this binary. The same applies to
+    ``runtime_sha256`` and the runtime ELF stub. Together these may trigger
+    downloads (~8 MB and ~1 MB respectively) the first time this runs if
+    neither is otherwise available locally.
 
     Parameters
     ----------
@@ -581,17 +743,8 @@ def write_config(config: BuildConfig, project_root: Path) -> None:
         data = tomllib.load(f)
     existing = set(data.get("tool", {}).get("appimage", {}).get("build", {}).keys())
 
-    new: dict[str, object] = {}
-    if "app" not in existing:
-        new["app"] = resolved.app
-    if "entry_point" not in existing:
-        new["entry_point"] = resolved.entry_point
-    if "python" not in existing:
-        new["python"] = resolved.python
-    if "icon" not in existing and resolved.icon is not None:
-        new["icon"] = str(resolved.icon.relative_to(project_root))
-    if "desktop" not in existing and resolved.desktop is not None:
-        new["desktop"] = str(resolved.desktop.relative_to(project_root))
+    new: dict[str, object] = _auto_detected_fields(resolved, project_root, existing)
+    new.update(_pinned_download_fields(resolved, project_root, existing))
 
     if not new:
         _log.info("")
@@ -617,8 +770,8 @@ def write_config(config: BuildConfig, project_root: Path) -> None:
         _log.info("  %s = %s", k, _toml_value(v))
 
 
-def _resolve_python_url(python: str, date: str, arch: str) -> str:
-    """Return the python-build-standalone download URL.
+def _resolve_python_url(python: str, date: str, arch: str) -> tuple[str, str | None]:
+    """Return the python-build-standalone download URL and its sha256, if published.
 
     Parameters
     ----------
@@ -631,8 +784,10 @@ def _resolve_python_url(python: str, date: str, arch: str) -> str:
 
     Returns
     -------
-    str
-        Direct download URL for the matching ``install_only_stripped`` tarball.
+    tuple[str, str | None]
+        Direct download URL for the matching ``install_only_stripped``
+        tarball, and its sha256 hex digest if GitHub published one for this
+        asset (``None`` otherwise).
 
     Raises
     ------
@@ -658,15 +813,21 @@ def _resolve_python_url(python: str, date: str, arch: str) -> str:
     with urllib.request.urlopen(req) as resp:  # noqa: S310  # nosec B310
         release: dict[str, object] = json.loads(resp.read())
 
-    assets: list[dict[str, str]] = release.get("assets", [])  # type: ignore[assignment]
+    assets: list[dict[str, object]] = release.get("assets", [])  # type: ignore[assignment]
     for asset in assets:
-        url = asset["browser_download_url"]
+        url = str(asset["browser_download_url"])
         if (
             f"cpython-{python}." in url
             and f"{pbs_arch}-unknown-linux-gnu-install_only_stripped" in url
             and "freethreaded" not in url
         ):
-            return url
+            digest = asset.get("digest")
+            sha256 = (
+                str(digest).removeprefix("sha256:")
+                if isinstance(digest, str) and digest.startswith("sha256:")
+                else None
+            )
+            return url, sha256
 
     tag = release.get("tag_name", date or "latest")
     msg = f"No Python {python} asset found for {pbs_arch} in release {tag}"
@@ -687,6 +848,95 @@ def _download(url: str, dest: Path) -> None:
     _log.info("Downloading %s", dest.name)
     with urllib.request.urlopen(url) as resp:  # noqa: S310  # nosec B310
         dest.write_bytes(resp.read())
+
+
+def _fetch_release_asset_digest(repo: str, tag: str, asset_name: str) -> tuple[str, str | None]:
+    """Return an asset's download URL and sha256 digest, if GitHub publishes one.
+
+    Parameters
+    ----------
+    repo : str
+        GitHub repository as ``owner/name``.
+    tag : str
+        Release tag (e.g. ``"continuous"``).
+    asset_name : str
+        Exact asset filename to look up within the release.
+
+    Returns
+    -------
+    tuple[str, str | None]
+        Direct download URL, and its sha256 hex digest if published
+        (``None`` otherwise).
+
+    Raises
+    ------
+    RuntimeError
+        If the release or the named asset cannot be found.
+
+    """
+    api_url = _GITHUB_RELEASE_TAG_API.format(repo=repo, tag=tag)
+    req = urllib.request.Request(  # noqa: S310
+        api_url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urllib.request.urlopen(req) as resp:  # noqa: S310  # nosec B310
+        release: dict[str, object] = json.loads(resp.read())
+
+    assets: list[dict[str, object]] = release.get("assets", [])  # type: ignore[assignment]
+    for asset in assets:
+        if asset.get("name") == asset_name:
+            digest = asset.get("digest")
+            sha256 = (
+                str(digest).removeprefix("sha256:")
+                if isinstance(digest, str) and digest.startswith("sha256:")
+                else None
+            )
+            return str(asset["browser_download_url"]), sha256
+
+    msg = f"Asset {asset_name!r} not found in {repo}@{tag}"
+    raise RuntimeError(msg)
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the lowercase hex sha256 digest of *path*."""
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_sha256(path: Path, expected: str, *, label: str) -> None:
+    """Raise ``RuntimeError`` if *path* does not match the *expected* sha256.
+
+    Parameters
+    ----------
+    path : Path
+        File to hash and verify.
+    expected : str
+        Expected sha256 hex digest (an optional ``sha256:`` prefix is
+        stripped, matching the format GitHub's Releases API uses).
+    label : str
+        Human-readable name of the file, used in the error message.
+
+    Raises
+    ------
+    RuntimeError
+        If the computed digest does not match *expected*.
+
+    """
+    actual = _sha256_file(path)
+    if actual.lower() != expected.lower().removeprefix("sha256:"):
+        msg = (
+            f"{label} sha256 mismatch for {path}: "
+            f"expected {expected}, got {actual}. "
+            "Remove the file and retry, or correct the configured hash."
+        )
+        raise RuntimeError(msg)
+    _log.info("%s sha256 verified: %s", label, actual)
 
 
 def _generate_apprun(resolved: _ResolvedBuild, dest: Path) -> None:
@@ -759,24 +1009,98 @@ def _run_hook(script: str, project_root: Path, appdir: Path) -> None:
     )
 
 
+def _require_or_warn_unverified(path: Path, *, label: str, config_key: str, strict: bool) -> None:
+    """Handle a resolved file with no hash available to verify it against.
+
+    Parameters
+    ----------
+    path : Path
+        The resolved (but unverified) file.
+    label : str
+        Human-readable name of the file, used in the message.
+    config_key : str
+        Name of the ``[tool.appimage.build]`` key that would pin it.
+    strict : bool
+        ``resolved.verify_downloads`` — when true, raise instead of warn.
+
+    Raises
+    ------
+    RuntimeError
+        If *strict* is true.
+
+    """
+    digest = _sha256_file(path)
+    if strict:
+        msg = (
+            f"{label} could not be verified: {path} (sha256 {digest}). "
+            f'Set {config_key} = "{digest}" in [tool.appimage.build], '
+            "or unset verify_downloads to allow unverified downloads."
+        )
+        raise RuntimeError(msg)
+    _log.warning(
+        '%s is unpinned and unverified (%s, sha256 %s). Pin it with: %s = "%s" '
+        "in [tool.appimage.build].",
+        label,
+        path,
+        digest,
+        config_key,
+        digest,
+    )
+
+
 def _resolve_python_tarball(
     resolved: _ResolvedBuild,
     python_cache: Path,
     arch: str,
 ) -> Path:
-    """Return the path to the Python tarball, downloading if necessary."""
+    """Return the path to the Python tarball, downloading if necessary.
+
+    A fresh download is verified against ``python_sha256`` when set, else
+    against the digest GitHub publishes for the asset, at no extra network
+    cost. A local ``python_archive`` or a cached tarball is only verified
+    when ``python_sha256`` is explicitly set — otherwise, unless
+    ``verify_downloads`` is also set, the documented offline/CI workflow
+    stays fully network-free by default and this is used unverified.
+    """
     if resolved.python_archive:
         tarball = Path(resolved.python_archive)
         if not tarball.exists():
             msg = f"Python archive not found: {tarball}"
             raise FileNotFoundError(msg)
         _log.info("Using Python archive: %s", tarball)
+        if resolved.python_sha256:
+            _verify_sha256(tarball, resolved.python_sha256, label="python archive")
+        else:
+            _require_or_warn_unverified(
+                tarball, label="python archive", config_key="python_sha256", strict=resolved.verify_downloads,
+            )
         return tarball
     if python_cache.exists():
         _log.info("Using cached python.tar.gz")
+        if resolved.python_sha256:
+            _verify_sha256(python_cache, resolved.python_sha256, label="python archive")
+        else:
+            _require_or_warn_unverified(
+                python_cache, label="python archive", config_key="python_sha256", strict=resolved.verify_downloads,
+            )
         return python_cache
-    python_url = _resolve_python_url(resolved.python, resolved.python_date, arch)
+    python_url, api_sha256 = _resolve_python_url(resolved.python, resolved.python_date, arch)
     _download(python_url, python_cache)
+    expected = resolved.python_sha256 or api_sha256
+    if expected:
+        try:
+            _verify_sha256(python_cache, expected, label="python archive")
+        except RuntimeError:
+            python_cache.unlink(missing_ok=True)
+            raise
+    else:
+        try:
+            _require_or_warn_unverified(
+                python_cache, label="python archive", config_key="python_sha256", strict=resolved.verify_downloads,
+            )
+        except RuntimeError:
+            python_cache.unlink(missing_ok=True)
+            raise
     return python_cache
 
 
@@ -785,23 +1109,122 @@ def _resolve_appimagetool(
     appimagetool_cache: Path,
     arch: str,
 ) -> Path:
-    """Return the path to appimagetool, downloading if necessary."""
+    """Return the path to appimagetool, downloading if necessary.
+
+    When ``appimagetool_sha256`` is set, the resolved binary is verified
+    against it regardless of where it came from (explicit path, ``PATH``,
+    build cache, or download) — a mismatch aborts the build. Only a binary
+    this function downloaded itself is deleted on mismatch, so a retry
+    re-downloads cleanly; a user-configured path or a ``PATH``-found binary
+    is never touched. A fresh download is additionally auto-verified
+    against the digest GitHub publishes for the asset, at no extra network
+    cost, even when ``appimagetool_sha256`` is unset. Only a config-path,
+    ``PATH``, or cache resolution with no pin configured is used unverified
+    (with a warning logging its actual hash).
+    """
+    tool: Path
+    downloaded = False
+    api_sha256: str | None = None
+
     if resolved.appimagetool:
         tool = Path(resolved.appimagetool)
         if not tool.exists():
             msg = f"appimagetool not found: {tool}"
             raise FileNotFoundError(msg)
         _log.info("Using appimagetool: %s", tool)
-        return tool
-    if path_tool := shutil.which("appimagetool"):
-        _log.info("Using appimagetool from PATH: %s", path_tool)
-        return Path(path_tool)
-    if appimagetool_cache.exists():
+    elif path_tool := shutil.which("appimagetool"):
+        tool = Path(path_tool)
+        _log.info("Using appimagetool from PATH: %s", tool)
+    elif appimagetool_cache.exists():
+        tool = appimagetool_cache
         _log.info("Using cached appimagetool")
-        return appimagetool_cache
-    _download(_APPIMAGETOOL_URL.format(arch=arch), appimagetool_cache)
-    appimagetool_cache.chmod(0o755)
-    return appimagetool_cache
+    else:
+        appimagetool_arch = _APPIMAGETOOL_ARCH_MAP.get(arch, arch)
+        asset_name = _APPIMAGETOOL_ASSET.format(arch=appimagetool_arch)
+        url, api_sha256 = _fetch_release_asset_digest(_APPIMAGETOOL_REPO, "continuous", asset_name)
+        _download(url, appimagetool_cache)
+        appimagetool_cache.chmod(0o755)
+        tool = appimagetool_cache
+        downloaded = True
+
+    expected = resolved.appimagetool_sha256 or api_sha256
+    if expected:
+        try:
+            _verify_sha256(tool, expected, label="appimagetool")
+        except RuntimeError:
+            if downloaded:
+                tool.unlink(missing_ok=True)
+            raise
+    else:
+        try:
+            _require_or_warn_unverified(
+                tool, label="appimagetool", config_key="appimagetool_sha256", strict=resolved.verify_downloads,
+            )
+        except RuntimeError:
+            if downloaded:
+                tool.unlink(missing_ok=True)
+            raise
+
+    return tool
+
+
+def _resolve_runtime_file(
+    resolved: _ResolvedBuild,
+    runtime_cache: Path,
+    arch: str,
+) -> Path:
+    """Return the path to the AppImage runtime ELF stub, downloading if necessary.
+
+    Newer appimagetool releases fetch this at packaging time via their own
+    bundled libcurl instead of embedding it, which leaves it both unverified
+    (nothing checks what was downloaded) and prone to hanging in network
+    environments that libcurl can't negotiate (e.g. some TLS-intercepting
+    proxies). Resolving and verifying it here, the same way as
+    ``_resolve_appimagetool``, closes both gaps and lets it be passed via
+    appimagetool's own ``--runtime-file`` flag to skip its live download
+    entirely.
+    """
+    runtime: Path
+    downloaded = False
+    api_sha256: str | None = None
+
+    if resolved.runtime_file:
+        runtime = Path(resolved.runtime_file)
+        if not runtime.exists():
+            msg = f"runtime file not found: {runtime}"
+            raise FileNotFoundError(msg)
+        _log.info("Using runtime file: %s", runtime)
+    elif runtime_cache.exists():
+        runtime = runtime_cache
+        _log.info("Using cached runtime file")
+    else:
+        runtime_arch = _APPIMAGETOOL_ARCH_MAP.get(arch, arch)
+        asset_name = _RUNTIME_ASSET.format(arch=runtime_arch)
+        url, api_sha256 = _fetch_release_asset_digest(_RUNTIME_REPO, "continuous", asset_name)
+        _download(url, runtime_cache)
+        runtime_cache.chmod(0o755)
+        runtime = runtime_cache
+        downloaded = True
+
+    expected = resolved.runtime_sha256 or api_sha256
+    if expected:
+        try:
+            _verify_sha256(runtime, expected, label="runtime file")
+        except RuntimeError:
+            if downloaded:
+                runtime.unlink(missing_ok=True)
+            raise
+    else:
+        try:
+            _require_or_warn_unverified(
+                runtime, label="runtime file", config_key="runtime_sha256", strict=resolved.verify_downloads,
+            )
+        except RuntimeError:
+            if downloaded:
+                runtime.unlink(missing_ok=True)
+            raise
+
+    return runtime
 
 
 def _prepare_python(
@@ -818,7 +1241,7 @@ def _prepare_python(
     python_bin = appdir / "python" / "bin" / "python3"
     _log.info("Installing packages: %s", " ".join(resolved.install_targets))
     subprocess.run(  # noqa: S603  # nosec B603
-        [str(python_bin), "-m", "pip", "install", *resolved.install_targets],
+        [str(python_bin), "-m", "pip", "install", "--no-compile", *resolved.install_targets],
         cwd=project_root,
         check=True,
     )
@@ -826,6 +1249,61 @@ def _prepare_python(
     if hook := resolved.hooks.get("post_install"):
         _log.info("Running post_install hook...")
         _run_hook(hook, project_root, appdir)
+
+
+def _compile_pyc(resolved: _ResolvedBuild, appdir: Path) -> None:
+    """Byte-compile installed packages to hash-based, timestamp-free ``.pyc``.
+
+    Packages are installed with ``pip install --no-compile``, so no
+    bytecode exists yet. Run once, at the very end of AppDir assembly —
+    after ``post_install``, extra files, and the ``pre_package`` hook — so
+    any step that edits an installed package's source is reflected in the
+    compiled cache. Uses ``--invalidation-mode unchecked-hash`` so a
+    ``.pyc``'s validity never depends on the install-time source mtime.
+
+    Deliberately single-threaded (no ``-j``): parallel workers finish in
+    scheduling-dependent order, which changes the order ``.pyc`` files are
+    created inside each ``__pycache__`` directory between runs — squashfs
+    packs directory entries in readdir order, so that alone was enough to
+    make the final ``.AppImage`` differ even though every file's *content*
+    was already identical.
+    """
+    python_bin = appdir / "python" / "bin" / "python3"
+    site_packages = appdir / "python" / "lib" / f"python{resolved.python}" / "site-packages"
+    _log.info("Compiling bytecode (hash-based, reproducible)...")
+    subprocess.run(  # noqa: S603  # nosec B603
+        [
+            str(python_bin),
+            "-m",
+            "compileall",
+            "-q",
+            "--invalidation-mode",
+            "unchecked-hash",
+            str(site_packages),
+        ],
+        check=True,
+    )
+
+
+def _normalize_mtimes(appdir: Path, epoch: int) -> None:
+    """Set every file's and directory's mtime in *appdir* to a fixed value.
+
+    ``mksquashfs`` embeds each inode's mtime into the packed image, so two
+    otherwise byte-identical AppDirs still produce a different squashfs (and
+    thus a different final ``.AppImage``) if their files were installed or
+    generated at different wall-clock times — which they always are, one
+    build run to the next. appimagetool exposes no flag to normalize this
+    itself, so it has to happen here, on the fully assembled AppDir, right
+    before packaging.
+
+    This alone is not sufficient — appimagetool touches a few paths of its
+    own during packaging (e.g. ``.DirIcon``), which need ``SOURCE_DATE_EPOCH``
+    set in *its* environment to normalize too; see ``build()``.
+    """
+    for root, dirs, files in os.walk(appdir):
+        for name in (*dirs, *files):
+            os.utime(Path(root) / name, (epoch, epoch), follow_symlinks=False)
+    os.utime(appdir, (epoch, epoch), follow_symlinks=False)
 
 
 def _copy_assets(resolved: _ResolvedBuild, project_root: Path, appdir: Path) -> None:
@@ -890,6 +1368,13 @@ def build(config: BuildConfig, project_root: Path) -> None:
     dist_dir = project_root / resolved.dist_dir
     python_cache = build_dir / "python.tar.gz"
     appimagetool_cache = build_dir / f"appimagetool-{arch}.AppImage"
+    runtime_cache = build_dir / f"runtime-{arch}"
+
+    # https://reproducible-builds.org/specs/source-date-epoch/ — respected
+    # both for our own AppDir mtime normalization and, further down, for
+    # appimagetool's own process environment (it touches a few paths of its
+    # own, e.g. .DirIcon, which our AppDir-side normalization can't reach).
+    epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
 
     _log.info("")
     _log.info("Preparing AppDir...")
@@ -906,16 +1391,25 @@ def build(config: BuildConfig, project_root: Path) -> None:
         _log.info("Running pre_package hook...")
         _run_hook(hook, project_root, appdir)
 
+    _compile_pyc(resolved, appdir)
+    _normalize_mtimes(appdir, epoch)
+
     appimagetool_bin = _resolve_appimagetool(resolved, appimagetool_cache, arch)
+    runtime_bin = _resolve_runtime_file(resolved, runtime_cache, arch)
 
     dist_dir.mkdir(parents=True, exist_ok=True)
     output_name = f"{resolved.app}-{arch}.AppImage"
 
-    cmd = [str(appimagetool_bin)]
+    cmd = [str(appimagetool_bin), "--runtime-file", str(runtime_bin)]
     if resolved.update_info:
         cmd += ["-u", resolved.update_info]
     cmd += [str(appdir), output_name]
 
     _log.info("Packaging AppImage...")
-    subprocess.run(cmd, cwd=dist_dir, check=True)  # noqa: S603  # nosec B603
+    subprocess.run(  # noqa: S603  # nosec B603
+        cmd,
+        cwd=dist_dir,
+        env={**os.environ, "SOURCE_DATE_EPOCH": str(epoch)},
+        check=True,
+    )
     _log.info("Done: %s", dist_dir / output_name)

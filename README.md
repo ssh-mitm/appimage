@@ -50,6 +50,20 @@ python -m appimage.build --init
 ```
 
 
+## Reproducible builds
+
+Two independent builds of the same project produce a **byte-for-byte
+identical** `.AppImage` — no configuration needed. That held up across the
+whole pipeline: bytecode compilation, every file's timestamp, and even
+which `appimagetool` binary does the packing (the classic tool's bundled
+`mksquashfs` has a [documented non-deterministic compression
+bug](https://github.com/AppImage/AppImageKit/issues/929) that no input
+normalization can work around — `appimage` defaults to its maintained,
+fixed successor instead).
+
+→ **[Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html)** — why this is hard, what's automatic, and how to pin appimagetool/Python for cross-machine guarantees.
+
+
 ## Bundled interpreter access
 
 The bundled Python is accessible at runtime without extracting the AppImage:
@@ -74,16 +88,6 @@ The AppImage can act as the Python interpreter for a virtual environment. Packag
 ```
 
 When launched through a venv symlink, the bundled `appimage` module activates the environment automatically.
-
-
-## Reproducible builds
-
-Pin the exact Python release to get byte-for-byte reproducible AppImages:
-
-```toml
-[tool.appimage.build]
-python_date = "20260211"
-```
 
 
 ## Configuration

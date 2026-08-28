@@ -162,11 +162,27 @@ Use the bundled interpreter's `pip` to install the application and the `appimage
 module into the bundled site-packages. This keeps everything self-contained inside `AppDir`.
 
 ```bash
-build/AppDir/python/bin/python3 -m pip install appimage myapp
+build/AppDir/python/bin/python3 -m pip install --no-compile appimage myapp
 ```
 
 The `appimage` package is the runtime component that handles entry point dispatch,
 `--python-interpreter`, and virtual environment support at launch time.
+
+`--no-compile` skips pip's usual bytecode compilation, which invalidates each `.pyc`
+against the *install-time source mtime* — a value that differs on every build even
+when the installed content is identical. `appimage.build` compiles bytecode itself,
+once, at the very end of AppDir assembly (after any hooks have run), using
+`compileall --invalidation-mode unchecked-hash` so a `.pyc`'s validity is tied to a
+hash of its source instead:
+
+```bash
+build/AppDir/python/bin/python3 -m compileall -q \
+  --invalidation-mode unchecked-hash \
+  build/AppDir/python/lib/python3.x/site-packages
+```
+
+This was the only source of non-determinism found when diffing two independently
+built AppImages of the same project byte-for-byte.
 
 ### Step 5 — Write the AppRun script
 
@@ -254,28 +270,59 @@ If no icon is available, a placeholder can be created with ImageMagick:
 convert -size 256x256 xc:gray build/AppDir/${APP}.png
 ```
 
-### Step 8 — Download appimagetool
+### Step 8 — Download appimagetool and the runtime stub
 
 `appimagetool` is the official tool for packing an AppDir into a SquashFS-based AppImage.
-It is distributed as a self-contained AppImage itself.
+It is distributed as a self-contained AppImage itself. `appimage.build` uses
+[`AppImage/appimagetool`](https://github.com/AppImage/appimagetool) — the maintained
+successor to `AppImage/AppImageKit`'s classic `appimagetool` — because AppImageKit's
+bundled `mksquashfs` has a documented non-deterministic multi-threaded compression bug
+(see [AppImageKit #929](https://github.com/AppImage/AppImageKit/issues/929)) that made
+byte-identical output impossible no matter how the AppDir itself was normalized;
+`AppImage/appimagetool` bundles a fixed, modern squashfs-tools instead.
 
 ```bash
 curl -L \
-  "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${ARCH}.AppImage" \
+  "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" \
   -o build/appimagetool
 chmod +x build/appimagetool
 ```
+
+Newer appimagetool releases no longer embed the AppImage runtime ELF stub — they fetch
+it live, over the network, at packaging time. Pre-fetching it yourself avoids depending
+on that live fetch succeeding (some network environments, e.g. certain TLS-intercepting
+proxies, can't complete it) and lets you verify what you got:
+
+```bash
+curl -L \
+  "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${ARCH}" \
+  -o build/runtime
+chmod +x build/runtime
+```
+
+Both are rolling `continuous` releases — the asset is replaced in place whenever a new
+build is published — but unlike AppImageKit's old `continuous` tag, GitHub *does*
+publish a sha256 digest per asset for both of these repos via its Releases API, so a
+fresh download can be verified against it at no extra cost. Downloading either one
+unpinned still means two builds run at different times, or on different machines, can
+end up packing with different binaries — the one piece of the pipeline `appimage.build`
+cannot make reproducible purely through AppDir normalization. Set `appimagetool_sha256`
+and `runtime_sha256` in `[tool.appimage.build]` (or run `--init` to write both
+automatically from whatever's currently resolved) to pin and verify them; without a
+pin, `appimage.build` still logs the sha256 of whichever binaries it used, so they can
+be copied into config later.
 
 ### Step 9 — Pack the AppImage
 
 ```bash
 mkdir -p dist
-build/appimagetool build/AppDir dist/${APP}-${ARCH}.AppImage
+build/appimagetool --runtime-file build/runtime build/AppDir dist/${APP}-${ARCH}.AppImage
 ```
 
-`appimagetool` compresses the AppDir into a SquashFS image, appends the AppImage runtime
-(a small ELF binary that mounts and executes it), and writes the result as a single
-executable file.
+`appimagetool` compresses the AppDir into a SquashFS image, prepends the AppImage
+runtime (a small ELF binary that mounts and executes it — `--runtime-file` supplies the
+copy from Step 8 instead of triggering another live download), and writes the result as
+a single executable file.
 
 ## What `appimage.build` automates
 
@@ -289,10 +336,29 @@ where before anything is built.
 **GitHub API lookup** — the module queries the python-build-standalone releases API to find
 the correct `install_only_stripped` asset for the current architecture and the requested
 Python minor version. Passing `python_date` in `[tool.appimage.build]` pins the exact
-release tag, making the build reproducible byte-for-byte.
+release tag. A freshly downloaded tarball is also verified against the sha256 digest
+GitHub publishes for the asset (or against `python_sha256`, if set) — no extra network
+request needed.
 
-**Caching** — the Python tarball and `appimagetool` binary are cached in `build/` and
-reused on subsequent builds.
+**Hash-based bytecode** — installed packages are compiled with
+`compileall --invalidation-mode unchecked-hash` instead of relying on pip's default
+timestamp-based `.pyc` cache (see Step 4).
+
+**Timestamp normalization** — every file and directory in the AppDir has its mtime set
+to `SOURCE_DATE_EPOCH` (default: the Unix epoch) right before packaging, and the same
+value is passed into appimagetool's own process environment, since it touches a few
+paths of its own (e.g. `.DirIcon`) that AppDir-side normalization can't reach.
+
+**appimagetool and runtime verification** — when `appimagetool_sha256`/`runtime_sha256`
+are set, the resolved binary (explicit path, `PATH`, build cache, or download — any of
+them for appimagetool; build cache or download for the runtime file) is verified
+against it before use; a mismatch aborts the build loudly rather than silently packing
+with an unexpected binary (see Step 8). The runtime file is always pre-fetched and
+passed via `--runtime-file`, so appimagetool never triggers its own live download.
+`verify_downloads` turns an unpinned resolution into a hard error instead of a warning.
+
+**Caching** — the Python tarball, `appimagetool` binary, and runtime file are all
+cached in `build/` and reused on subsequent builds.
 
 **AppRun generation** — the AppRun script is generated from a template that also handles
 the `squashfs-root` fallback for environments without FUSE (containers, some CI systems),
@@ -305,6 +371,8 @@ metadata (`name`, `description`). A custom file can be provided via the `desktop
 **Lifecycle hooks** — shell scripts can run after `pip install` (`post_install`) or after
 all files are in place but before `appimagetool` runs (`pre_package`). The `APPDIR`
 environment variable is set when the hook executes, so hooks can modify the AppDir directly.
+Bytecode compilation (above) runs after `pre_package`, so a hook that edits an installed
+package's source is still reflected in the compiled `.pyc`.
 
 **Extra files** — arbitrary files or directories are copied into the AppDir via
 `[tool.appimage.build.extra_files]`.

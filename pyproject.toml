@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -129,6 +129,7 @@ disable = [
 [tool.pylint.design]
 max-args = 7
 max-locals = 25
+max-module-lines = 1450
 
 [tool.pylint.MASTER]
 load-plugins = "pylint.extensions.docparams"

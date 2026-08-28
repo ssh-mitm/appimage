@@ -5,6 +5,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Final
 
 from appimage.build import BuildConfig, build, check, write_config
 
@@ -88,6 +89,22 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--appimagetool-version",
+        dest="appimagetool_version",
+        metavar="LABEL",
+        help="Informational label for the pinned appimagetool build (see --appimagetool-sha256).",
+    )
+    parser.add_argument(
+        "--appimagetool-sha256",
+        dest="appimagetool_sha256",
+        metavar="SHA256",
+        help=(
+            "Expected sha256 of the appimagetool binary. Verified regardless of "
+            "how it was resolved; a mismatch aborts the build. --init writes this "
+            "automatically."
+        ),
+    )
+    parser.add_argument(
         "--python-archive",
         dest="python_archive",
         metavar="PATH",
@@ -96,27 +113,76 @@ def _parse_args() -> argparse.Namespace:
             "When omitted, the build cache is checked, then a download."
         ),
     )
+    parser.add_argument(
+        "--python-sha256",
+        dest="python_sha256",
+        metavar="SHA256",
+        help=(
+            "Expected sha256 of the python-build-standalone tarball. Fresh "
+            "downloads are already verified against GitHub's published digest "
+            "even without this."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-file",
+        dest="runtime_file",
+        metavar="PATH",
+        help=(
+            "Path to a local AppImage runtime ELF stub, passed to appimagetool "
+            "as --runtime-file. When omitted, the build cache is checked, then "
+            "a download."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-sha256",
+        dest="runtime_sha256",
+        metavar="SHA256",
+        help=(
+            "Expected sha256 of the runtime file. Fresh downloads are already "
+            "verified against GitHub's published digest even without this."
+        ),
+    )
+    parser.add_argument(
+        "--verify-downloads",
+        dest="verify_downloads",
+        action="store_true",
+        help=(
+            "Abort the build if appimagetool, the runtime file, or the Python "
+            "archive would otherwise be used unverified (no configured hash and "
+            "no digest published for that resolution path), instead of just "
+            "warning."
+        ),
+    )
     return parser.parse_args()
 
 
+_CLI_OVERRIDE_FIELDS: Final = (
+    "app",
+    "entry_point",
+    "python",
+    "python_date",
+    "extras",
+    "packages",
+    "appimagetool",
+    "appimagetool_version",
+    "appimagetool_sha256",
+    "python_archive",
+    "python_sha256",
+    "runtime_file",
+    "runtime_sha256",
+    "verify_downloads",
+)
+
+
 def _apply_cli_overrides(config: BuildConfig, args: argparse.Namespace) -> None:
-    """Apply CLI argument overrides to a BuildConfig."""
-    if args.app:
-        config.app = args.app
-    if args.entry_point:
-        config.entry_point = args.entry_point
-    if args.python:
-        config.python = args.python
-    if args.python_date:
-        config.python_date = args.python_date
-    if args.extras:
-        config.extras = args.extras
-    if args.packages:
-        config.packages = args.packages
-    if args.appimagetool:
-        config.appimagetool = args.appimagetool
-    if args.python_archive:
-        config.python_archive = args.python_archive
+    """Apply CLI argument overrides to a BuildConfig.
+
+    Each field in ``_CLI_OVERRIDE_FIELDS`` has a same-named CLI destination
+    and ``BuildConfig`` attribute; a truthy CLI value overrides the config.
+    """
+    for name in _CLI_OVERRIDE_FIELDS:
+        if value := getattr(args, name):
+            setattr(config, name, value)
 
 
 def main() -> None:

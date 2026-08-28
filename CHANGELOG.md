@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Default appimagetool source switched from AppImageKit's legacy `continuous` build to its successor [`AppImage/appimagetool`](https://github.com/AppImage/appimagetool), fixing a non-deterministic `mksquashfs` that made byte-identical output impossible (see [AppImageKit#929](https://github.com/AppImage/AppImageKit/issues/929))
+- `appimagetool_sha256`/`appimagetool_version` config keys and `--appimagetool-sha256`/`--appimagetool-version` CLI options: verify appimagetool's sha256 regardless of source; a fresh download is auto-verified against GitHub's published digest even without this set
+- `runtime_file`/`runtime_sha256` config keys and `--runtime-file`/`--runtime-sha256` CLI options: pre-fetch and verify the AppImage runtime ELF stub ourselves instead of letting appimagetool download it live and unverified at packaging time
+- `verify_downloads` config key / `--verify-downloads` CLI flag: abort the build instead of warning when appimagetool, the runtime file, or the Python archive would be used unverified
+- `python_sha256` config key / `--python-sha256` CLI option: verify the python-build-standalone tarball's sha256
+- `--init` now also resolves and pins appimagetool and the runtime file when not already configured
+- Hash-pinned build dependencies (`requirements-build.txt`, `packaging/update-requirements.sh`, `packaging/verify-reproducible-build.sh`) and a bit-for-bit reproducibility proof for this package's own PyPI wheel — see `docs/reproducible-builds.md`
+- `tests/test_build.py`: first unit test coverage for the build module
+
+### Changed
+
+- Installed packages are byte-compiled via `pip install --no-compile` + `compileall --invalidation-mode unchecked-hash` instead of pip's default timestamp-based bytecode cache
+- Every file and directory in the AppDir has its mtime normalized to `SOURCE_DATE_EPOCH` immediately before packaging
+- `SOURCE_DATE_EPOCH` is now also passed into appimagetool's own process environment during packaging, not just applied to the AppDir
+- README "Reproducible builds" section documents `appimagetool_sha256` and `SOURCE_DATE_EPOCH` as required alongside `python_date` for byte-for-byte reproducibility
+
+### Fixed
+
+- `write_config()`/`--init` no longer crashes with `ValueError` when a project has no icon file
+- appimagetool/runtime-file download URLs now map `armv7l` to the actual `armhf` asset name instead of `armv7`, which does not exist and would 404
+
 ## [2.0.1] - 2026-07-25
 
 ### Fixed
