@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `require_build_constraint` config key / `--require-build-constraint` CLI flag: abort the build instead of warning when `build_constraint` is not set
 - `--check`'s "Dependency verification" summary line gains a sibling "Build backend verification" line for `build_constraint`
 - `update_info` auto-detection: derives a `gh-releases-zsync` string from `[project.urls]` when an unambiguous GitHub repo is found and `update_info` isn't already set — surfaced as a warning via `--check`, written by `--init`, never silently applied to a live build (a wrong guess would embed a broken update pointer in the packaged AppImage)
+- `--check`'s reproducibility summary is now a checklist: each of the three independent pinning layers (toolchain, `pylock`, `build_constraint`) gets a ✓/✗ mark, headed by a "Reproducibility checklist (N/3 ready)" count — same information as before, easier to scan at a glance
+- `docs/reproducible-builds.md`: new "Getting to full reproducibility" walkthrough at the top of the page, sequencing `--init` → `--lock` → `build_constraint` → `--reproducible` as one linear path instead of leaving readers to piece it together from the independent sections below
 
 ### Changed
 

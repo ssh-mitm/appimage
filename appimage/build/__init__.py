@@ -786,7 +786,7 @@ _REPRODUCIBILITY_PINS: Final = ("python_date", "appimagetool_sha256", "runtime_s
 
 
 def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
-    """Return a short status summary of the three independent pinning stories.
+    """Return a checklist of the three independent pinning stories.
 
     Unlike the individual warnings above, this always reflects the current
     state — not just when ``reproducible``/``require_pylock``/
@@ -798,7 +798,8 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
     ``reproducible`` is already turned on — nothing in between.
     """
     pinned = [key for key in _REPRODUCIBILITY_PINS if getattr(resolved, key)]
-    if len(pinned) == len(_REPRODUCIBILITY_PINS):
+    toolchain_ready = len(pinned) == len(_REPRODUCIBILITY_PINS)
+    if toolchain_ready:
         repro_line = f"Reproducibility: {len(pinned)}/{len(_REPRODUCIBILITY_PINS)} pins set"
     else:
         repro_line = (
@@ -806,18 +807,29 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
             f"({', '.join(_REPRODUCIBILITY_PINS)}) — run --init to resolve and pin them"
         )
 
+    pylock_ready = bool(resolved.pylock)
     pylock_line = (
         f"Dependency verification: pylock set ({resolved.pylock})"
-        if resolved.pylock
+        if pylock_ready
         else "Dependency verification: pylock not set — run --lock to generate pylock.toml"
     )
+
+    build_constraint_ready = bool(resolved.build_constraint)
     build_constraint_line = (
         f"Build backend verification: build_constraint set ({resolved.build_constraint})"
-        if resolved.build_constraint
+        if build_constraint_ready
         else "Build backend verification: build_constraint not set — the packaged "
         "project's own build backend is installed unverified"
     )
-    return [repro_line, pylock_line, build_constraint_line]
+
+    ready = [toolchain_ready, pylock_ready, build_constraint_ready]
+    header = f"Reproducibility checklist ({sum(ready)}/{len(ready)} ready):"
+    marks = ["✓" if r else "✗" for r in ready]
+    lines = [repro_line, pylock_line, build_constraint_line]
+    return [
+        header,
+        *(f"  {mark} {line}" for mark, line in zip(marks, lines, strict=True)),
+    ]
 
 
 def _format_check(resolved: _ResolvedBuild) -> None:

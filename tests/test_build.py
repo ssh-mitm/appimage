@@ -1008,6 +1008,41 @@ def test_reproducibility_summary_reports_partial_pins() -> None:
     assert any("Reproducibility: 1/3 pins set" in line for line in lines)
 
 
+def test_reproducibility_summary_header_counts_ready_layers() -> None:
+    from appimage.build import _reproducibility_summary
+
+    lines = _reproducibility_summary(make_resolved())
+    assert lines[0] == "Reproducibility checklist (0/3 ready):"
+
+    lines = _reproducibility_summary(
+        make_resolved(
+            python_date="20260211",
+            appimagetool_sha256="a" * 64,
+            runtime_sha256="b" * 64,
+            pylock="pylock.toml",
+            build_constraint="requirements-build.txt",
+        )
+    )
+    assert lines[0] == "Reproducibility checklist (3/3 ready):"
+
+
+def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
+    from appimage.build import _reproducibility_summary
+
+    lines = _reproducibility_summary(
+        make_resolved(
+            python_date="20260211",
+            appimagetool_sha256="a" * 64,
+            runtime_sha256="b" * 64,
+            pylock="pylock.toml",
+        )
+    )
+
+    assert any(line.strip().startswith("✓") and "Reproducibility:" in line for line in lines)
+    assert any(line.strip().startswith("✓") and "Dependency verification:" in line for line in lines)
+    assert any(line.strip().startswith("✗") and "Build backend verification:" in line for line in lines)
+
+
 # ---------------------------------------------------------------------------
 # _install_from_pylock / _prepare_python with pylock configured
 # ---------------------------------------------------------------------------
