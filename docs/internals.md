@@ -176,13 +176,21 @@ once, at the very end of AppDir assembly (after any hooks have run), using
 hash of its source instead:
 
 ```bash
-build/AppDir/python/bin/python3 -m compileall -q \
+build/AppDir/python/bin/python3 -m compileall -qf \
   --invalidation-mode unchecked-hash \
   build/AppDir/python/lib/python3.x/site-packages
 ```
 
-This was the only source of non-determinism found when diffing two independently
-built AppImages of the same project byte-for-byte.
+`-f` (force) matters here, not just as a nicety: bytecode caching happens the moment
+something merely *imports* a module — not only when pip compiles it — so any earlier
+step in the build that imports a package (a build backend invoked to build the local
+project's wheel, a lifecycle hook, anything) can leave behind a `.pyc` already
+timestamp-invalidated, with that wall-clock value baked in. Without `-f`,
+`compileall` sees an existing, valid-looking `.pyc` and leaves it alone instead of
+regenerating it in hash-based mode — reintroducing exactly the non-determinism this
+step exists to eliminate, just through a side door. This was found by diffing two
+independently built AppImages of the same project byte-for-byte and tracing the
+differing files back to their timestamp-invalidated `.pyc` headers.
 
 ### Step 5 — Write the AppRun script
 
@@ -356,6 +364,13 @@ against it before use; a mismatch aborts the build loudly rather than silently p
 with an unexpected binary (see Step 8). The runtime file is always pre-fetched and
 passed via `--runtime-file`, so appimagetool never triggers its own live download.
 `verify_downloads` turns an unpinned resolution into a hard error instead of a warning.
+
+**Dependency and build-backend verification** — with `pylock`/`build_pylock` set,
+third-party dependencies and the project's own `[build-system].requires` backend are
+installed hash-verified (`pip install --require-hashes` / `--build-constraint`)
+instead of resolved live from whatever the index currently serves. Generated via
+`--lock`; see [Reproducible builds](reproducible-builds.md#verified-dependencies) for
+the full mechanism.
 
 **Caching** — the Python tarball, `appimagetool` binary, and runtime file are all
 cached in `build/` and reused on subsequent builds.

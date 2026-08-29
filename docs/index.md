@@ -52,15 +52,22 @@ python -m appimage.build --check
 
 ```
 Build configuration:
-  app:            myapp                    [project] name
-  entry_point:    myapp                    [project] scripts
-  python:         3.11                     [project] requires-python
-  packages:       appimage==2.0.1 .        default (.)
-  icon:           myapp.png                detected (myapp.png)
-  desktop:        (generated)              will be generated
-  build_dir:      build                    default
-  dist_dir:       dist                     default
+  app:            myapp                               [[project] name]
+  entry_point:    myapp                               [[project] scripts]
+  python:         3.11                                [[project] requires-python]
+  packages:       appimage==2.0.1 .                    [default (.)]
+  icon:           myapp.png                            [detected (myapp.png)]
+  desktop:        (generated)                          [will be generated]
+  build_dir:      build                                [default]
+  dist_dir:       dist                                 [default]
+
+  Reproducibility checklist (0/3 ready):
+    ✗ Reproducibility: 0/3 pins set (python_date, appimagetool_sha256, runtime_sha256) — run --init to resolve and pin them
+    ✗ Dependency verification: pylock not set — run --lock to generate pylock.toml
+    ✗ Build backend verification: build_pylock not set — run --lock to generate it alongside pylock.toml
 ```
+
+None of that is required to build — see [Reproducible builds](reproducible-builds.md) for what each checklist line means and how to close it.
 
 ## Write detected values to pyproject.toml
 
@@ -69,17 +76,3 @@ python -m appimage.build --init
 ```
 
 Adds only the auto-detected fields that are not already set — so you can review and adjust them.
-
-## Integration with hatch
-
-```toml
-[tool.hatch.envs.appimage]
-dependencies = ["appimage"]
-
-[tool.hatch.envs.appimage.scripts]
-build = ["python -m appimage.build"]
-```
-
-```sh
-hatch run appimage:build
-```

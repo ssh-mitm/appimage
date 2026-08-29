@@ -25,8 +25,8 @@
 
 `appimage` bundles a complete Python distribution together with your application and all its dependencies into a single executable file.
 
-> **The same Python that uv installs.**
-> The bundled interpreter comes from [python-build-standalone](https://github.com/astral-sh/python-build-standalone) — identical to what `uv python install` provides. What you develop with locally is what gets shipped in the AppImage.
+- **Same Python as uv**: the bundled interpreter comes from [python-build-standalone](https://github.com/astral-sh/python-build-standalone), the same builds `uv python install` uses, so the Python you develop and test with locally is exactly what ships in the AppImage
+- **Reproducible builds**: two independent builds of the same project produce a byte-for-byte identical `.AppImage`, no configuration needed ([details below](#reproducible-builds))
 
 
 ## Quick Start
@@ -35,14 +35,13 @@
 pip install appimage
 ```
 
-**A `pyproject.toml` is all that's needed** — and if your project already has one, you're ready to build.
-`app`, `entry_point`, and `python` version are read from `[project]` automatically.
+A `pyproject.toml` is all that's needed to build. If your project already has one, `app`, `entry_point`, and `python` version are read from `[project]` automatically.
 
 ```sh
 # Check what will be detected before building
 python -m appimage.build --check
 
-# Build — the AppImage is written to dist/myapp-x86_64.AppImage
+# Writes the AppImage to dist/myapp-x86_64.AppImage
 python -m appimage.build
 
 # Optionally: persist detected values to pyproject.toml to pin or adjust them
@@ -52,16 +51,17 @@ python -m appimage.build --init
 
 ## Reproducible builds
 
-Two independent builds of the same project produce a **byte-for-byte
-identical** `.AppImage` — no configuration needed. That held up across the
-whole pipeline: bytecode compilation, every file's timestamp, and even
-which `appimagetool` binary does the packing (the classic tool's bundled
-`mksquashfs` has a [documented non-deterministic compression
-bug](https://github.com/AppImage/AppImageKit/issues/929) that no input
-normalization can work around — `appimage` defaults to its maintained,
-fixed successor instead).
+Two independent builds of the same project produce a byte-for-byte identical `.AppImage`, with no configuration needed. This covers bytecode compilation, file timestamps, and the `appimagetool` binary itself: `appimage` defaults to the [maintained successor](https://github.com/AppImage/appimagetool) of the classic tool, which has a [known non-deterministic compression bug](https://github.com/AppImage/AppImageKit/issues/929) in its bundled `mksquashfs`.
 
-→ **[Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html)** — why this is hard, what's automatic, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `--lock`.
+To also guarantee this across machines and over time, with every dependency hash-verified:
+
+```sh
+python -m appimage.build --init --lock       # pin the toolchain, hash-pin every dependency
+# then, once a build has succeeded:
+# reproducible = true   in [tool.appimage.build]
+```
+
+See [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for what's automatic, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `--lock`.
 
 
 ## Bundled interpreter access
@@ -79,7 +79,7 @@ The bundled Python is accessible at runtime without extracting the AppImage:
 
 ## Virtual environments
 
-The AppImage can act as the Python interpreter for a virtual environment. Packages installed into the venv extend the bundled ones — without repackaging the AppImage:
+The AppImage can act as the Python interpreter for a virtual environment. Packages installed into the venv extend the bundled ones, without repackaging the AppImage:
 
 ```sh
 ./myapp-x86_64.AppImage --python-interpreter -m venv ~/.venv/myapp
@@ -92,6 +92,4 @@ When launched through a venv symlink, the bundled `appimage` module activates th
 
 ## Configuration
 
-All options go in `[tool.appimage.build]` inside `pyproject.toml` — every key is optional. Lifecycle hooks, extra files, custom AppRun scripts, and environment variable injection are supported.
-
-→ **[Full documentation](https://appimage.readthedocs.io)**
+All options go in `[tool.appimage.build]` inside `pyproject.toml`, and every key is optional. Lifecycle hooks, extra files, custom AppRun scripts, and environment variable injection are supported. See the [full documentation](https://appimage.readthedocs.io) for details.
