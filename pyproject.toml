@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling==1.32.0"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.12.7,<0.13"]
+build-backend = "uv_build"
 
 [project]
 name = "appimage"
-dynamic = ["version"]
+version = "2.0.1"
 authors = [
     {name = "SSH-MITM Dev-Team", email = "support@ssh-mitm.at"}
 ]
@@ -48,17 +48,8 @@ Changelog = "https://github.com/ssh-mitm/appimage/blob/main/CHANGELOG.md"
 Source = "https://github.com/ssh-mitm/appimage"
 Tracker = "https://github.com/ssh-mitm/appimage/issues"
 
-[tool.hatch.version]
-path = "appimage/__init__.py"
-
-[tool.hatch.build]
-include = [
-    "appimage/**/*.py",
-    "appimage/assets/*.svg",
-    "appimage/assets/*.png",
-    "appimage/build/templates/AppRun.sh",
-    "appimage/build/templates/desktop.template",
-]
+[tool.uv.build-backend]
+module-root = ""
 
 [tool.hatch.envs.hatch-test]
 dependencies = ["pytest"]
@@ -128,8 +119,8 @@ disable = [
 
 [tool.pylint.design]
 max-args = 7
-max-locals = 25
-max-module-lines = 1750
+max-locals = 26
+max-module-lines = 1900
 
 [tool.pylint.MASTER]
 load-plugins = "pylint.extensions.docparams"

@@ -4,31 +4,24 @@
 #
 #    pip-compile --all-build-deps --allow-unsafe --generate-hashes --no-emit-find-links --no-index --only-build-deps --output-file=requirements-build.txt pyproject.toml
 #
-editables==0.6 \
-    --hash=sha256:1163834902381c4613787951c5914800fdf155ae08848a373b8ea5006780977c \
-    --hash=sha256:d70e4698078a1d033e7786d9c64e5be070d058a67c21417024d38a58ac20aa43
-    # via appimage (pyproject.toml::build-system.backend::editable)
-hatchling==1.32.0 \
-    --hash=sha256:0bdbde4a52b06c37e3eca395f85a762bf0ef06fe374fd8ae429dc6be10230f5f \
-    --hash=sha256:0e17c9c3b9aa7c625acc8d0f5b622f107d5049af9ecf5ada4de1aada5be7cdbc
+uv-build==0.12.7 \
+    --hash=sha256:00b8ee48b938c776be6c5a1b7093cac8540477de4452d724ab94a6d4f6f03df0 \
+    --hash=sha256:1250f226909ca3b31d0d352ec8fc3d6b7837c74aa71aa244965daee904e74b54 \
+    --hash=sha256:130b8c8c87fa37068af29ea0cbc5821d068cc59044d5c35be0f8fe2069d4d98d \
+    --hash=sha256:1a632018f310ec957a6540e70894df38a5c4f5d08defbd4ba5c32a7f7a59ea14 \
+    --hash=sha256:1b181d952efbd3319359ba3fd7341039076203cdea88ed0eb99c7ff88de3ec8f \
+    --hash=sha256:2c0baba9f1f1dfbfcb3dede01d04e7e9b94062b00aaf9880dcde73bd5e5c127b \
+    --hash=sha256:2e63e6ff97e2a4d932c93bdb41a653ba3971dbf88237565b8beec533124745cb \
+    --hash=sha256:315e94c46bc4894ac47ded2971e47adccdcb98fd50d3a692aa576f0880c3dca8 \
+    --hash=sha256:3a4b580243aa2655cf2c8ae800d5e53aec9c01a9cd6397681d9e488cc1662217 \
+    --hash=sha256:58aa221134e58b3727ce28ef5fee693b86ef422d840e3dd4bd9b0ff49970c6b5 \
+    --hash=sha256:5c256661097cbb80ef85fbaadc70cb87891b5c07dc8a7d0de3a76abd8f05cabe \
+    --hash=sha256:8c367c73da9e7251d33c79f645a34f5ff496b087b4941437029d059533ba9f65 \
+    --hash=sha256:955aacadc5912db4a9d540a871bac3fd857d1233b7de81604b1d2a64d779c506 \
+    --hash=sha256:a67e797fa0a0bf3b0fad538c78a461c38a4c5db11ed6f59b37a13636419cb3a0 \
+    --hash=sha256:ab959502eb15c05a1c381e5b96e3f4abdbcf32d7f19765c00d737ade21cc682b \
+    --hash=sha256:b0e7701924c1f1a71d2929dbb5cb533cc6e1fa8789a20a2cca91708c05f69e6a \
+    --hash=sha256:d301089ca53da8dc4fa2998aa0c791f5a69330c8bfd85de724e09d950257df3b \
+    --hash=sha256:e04fe07cc9b6207a41e4971e04d85100edcd1be7fd9a6c889692f5092a9bd7cf \
+    --hash=sha256:f0b0bcd69f31f3521292d24f44a65e05d4f2b908c1d24c6dc5c7c9e9918d8e08
     # via appimage (pyproject.toml::build-system.requires)
-packaging==26.3 \
-    --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
-    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
-    # via hatchling
-pathspec==1.1.1 \
-    --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \
-    --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
-    # via hatchling
-pluggy==1.6.0 \
-    --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
-    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
-    # via hatchling
-tomlkit==0.15.1 \
-    --hash=sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304 \
-    --hash=sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97
-    # via hatchling
-trove-classifiers==2026.6.1.19 \
-    --hash=sha256:ab4c4ec93cc4a4e7815fa759906e05e6bb3f2fbd92ea0f897288c6a43efd15b3 \
-    --hash=sha256:c5132b4b61a829d11cfbd2d72e97f20a45ed6edb95e45c5efdeb5e00836b2745
-    # via hatchling

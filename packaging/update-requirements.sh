@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Regenerates requirements-build.txt, the hash-pinned set of PEP 518 build
-# dependencies (hatchling and its transitive deps) used to make appimage's
-# PyPI wheel reproducibly buildable via
-# `pip wheel --build-constraint requirements-build.txt`. See
+# Regenerates requirements-build.txt, the hash-pinned PEP 518 build
+# dependency (uv_build) used to make appimage's PyPI wheel reproducibly
+# buildable via `pip wheel --build-constraint requirements-build.txt`. See
 # docs/reproducible-builds.md for the full rationale.
 #
-# No wheelhouse detour here: hatchling and its transitive deps (packaging,
-# pathspec, pluggy, trove-classifiers) are all pure-Python packages with a
-# single universal wheel, so `pip-compile --generate-hashes` already
-# resolves exactly one hash per package on its own -- the wheelhouse
-# restriction only matters for packages with multiple platform-specific
-# wheels (C extensions), which none of these are.
+# uv_build has no transitive dependencies of its own -- unlike hatchling,
+# which this project used before, it ships as a single compiled binary per
+# platform (no packaging/pathspec/pluggy/etc. chain to pin alongside it).
+# It IS platform-specific, though: `pip-compile --generate-hashes` without
+# a wheelhouse restriction resolves every published wheel variant (linux,
+# macOS, Windows, multiple arches) under the one version pin, so whichever
+# platform actually runs the install (this project's CI only ever builds
+# on ubuntu-latest x86_64) still finds its hash in the list.
 #
 # Usage: packaging/update-requirements.sh [--upgrade]
 #   --upgrade   move pins forward to the latest version satisfying
