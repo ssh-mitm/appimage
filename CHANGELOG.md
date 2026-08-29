@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - CI now installs this package's own build dependencies hash-verified (`pip install --require-hashes -r requirements-build.txt`) and builds the release wheel with `pip wheel --build-constraint requirements-build.txt --no-deps`, instead of an unverified `hatch build`; a new `reproducible-build` job runs `packaging/verify-reproducible-build.sh` on every push/PR to prove the wheel build is bit-identical across independent runs
+- CI pins `hatch`, `pip`, and `build` to exact versions instead of installing whatever the index currently resolves (previously only this project's own build backend was pinned; the CI tooling that installs and drives it was not)
 - Installed packages are byte-compiled via `pip install --no-compile` + `compileall --invalidation-mode unchecked-hash` instead of pip's default timestamp-based bytecode cache
 - Every file and directory in the AppDir has its mtime normalized to `SOURCE_DATE_EPOCH` immediately before packaging
 - `SOURCE_DATE_EPOCH` is now also passed into appimagetool's own process environment during packaging, not just applied to the AppDir
