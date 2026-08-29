@@ -16,28 +16,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `reproducible` config key / `--reproducible` CLI flag: shortcut requiring all reproducibility pins to be set
 - `pylock`/`require_pylock` config keys and CLI options: hash-pinned dependency installs via `pip install --require-hashes`
 - `build_pylock`/`require_build_pylock` config keys and CLI options: hash-pinned build-backend installs
-- `--lock` CLI mode: generates/refreshes `pylock.toml` and `build_pylock` via `pip lock`; `--uploaded-prior-to PnD` cooldown window
-- `--init` now also resolves and pins appimagetool and the runtime file
-- `--check`/`build` now print a reproducibility checklist and dependency-verification summary
+- `lock` command: generates/refreshes `pylock.toml` and `build_pylock` via `pip lock`; `--uploaded-prior-to PnD` cooldown window
+- `init` now also resolves and pins appimagetool and the runtime file
+- `check`/build now print a reproducibility checklist and dependency-verification summary
 - `update_info` auto-detection from `[project.urls]`
 - Bundled `appimage` runtime module is hash-verified against PyPI's digest by default, independent of `pylock`
-- `--check`'s reproducibility checklist gains ✓/✗ marks and a ready-count header
+- `check`'s reproducibility checklist gains ✓/✗ marks and a ready-count header
+- `enable-reproducible` command: pins the toolchain, locks dependencies, verifies with a real build, and only then turns on `reproducible`
 
 ### Changed
 
-- `--init` and `--lock` can now be combined in one invocation (`--init --lock`)
+- **Breaking:** `--check`/`--init`/`--lock` are now subcommands (`check`/`init`/`lock`); building stays the default with no subcommand
+- **Breaking:** console script renamed `appimage-build` → `appimagectl`; module renamed `appimage.build` → `appimage.ctl`
+- **Breaking:** config table renamed `[tool.appimage.build]` → `[tool.appimage]`
 - Installed packages are byte-compiled via `pip install --no-compile` + `compileall --invalidation-mode unchecked-hash`
 - `SOURCE_DATE_EPOCH` is now applied consistently: AppDir file/directory mtimes are normalized to it, and it's passed into appimagetool's own process environment
 
 ### Fixed
 
-- `write_config()`/`--init` no longer crashes with `ValueError` when a project has no icon file
+- `write_config()`/`init` no longer crashes with `ValueError` when a project has no icon file
 - appimagetool/runtime-file download URLs now map `armv7l` to `armhf` correctly
 - `pylock` generation no longer drops the `appimage` runtime module or `packages` entries
-- `--init`/`write_config()` no longer writes a wrong `entry_point` guess into `pyproject.toml`
-- `--init`/`write_config()` now resolves and writes `python_date` and `python_sha256`
+- `init`/`write_config()` no longer writes a wrong `entry_point` guess into `pyproject.toml`
+- `init`/`write_config()` now resolves and writes `python_date` and `python_sha256`
 - `_compile_pyc` now forces recompilation, fixing a reproducibility break from stale `.pyc` timestamps
 - `build_pylock` is now applied via `pip install --build-constraint` instead of `--no-build-isolation`, so the build backend no longer stays installed in the shipped AppImage
+- The build machine's own absolute path no longer leaks into the AppImage (compiled bytecode, stray stdlib `.pyc`, `direct_url.json`, console-script shims)
 
 ## [2.0.1] - 2026-07-25
 

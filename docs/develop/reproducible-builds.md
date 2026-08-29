@@ -8,7 +8,7 @@ builds](../reproducible-builds.md).
 The wheel published to [pypi.org](https://pypi.org/project/appimage/) is
 built via `uv_build`, the PEP 518 build backend declared in
 `[build-system]` in `pyproject.toml` — a natural fit alongside
-`appimage.build`'s own use of `uv python install`/python-build-standalone
+`appimage.ctl`'s own use of `uv python install`/python-build-standalone
 for the interpreter it bundles into every AppImage (see [Reproducible
 builds](../reproducible-builds.md)). This page covers how the wheel build
 is made hash-verified and provably bit-identical across independent

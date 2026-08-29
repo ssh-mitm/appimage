@@ -6,7 +6,7 @@ nothing pinned — produce a **byte-for-byte identical** `.AppImage` file:
 ```bash
 $ sha256sum dist/myapp-x86_64.AppImage
 db8b648c9ddcc50773b740219d3ecb4910b6bf3b18907b566f2eb1b624a79e35  dist/myapp-x86_64.AppImage
-$ rm -rf build dist && python -m appimage.build
+$ rm -rf build dist && python -m appimage.ctl
 $ sha256sum dist/myapp-x86_64.AppImage
 db8b648c9ddcc50773b740219d3ecb4910b6bf3b18907b566f2eb1b624a79e35  dist/myapp-x86_64.AppImage
 ```
@@ -19,47 +19,66 @@ alone verifies it.
 
 The guarantee above — same input, same bytes, on one machine, right now —
 needs no configuration. Two further layers are opt-in on top of it, each
-closing a different gap, each independent of the other:
+closing a different gap, each independent of the other: pinning the
+toolchain and hash-pinning every dependency, and turning on the umbrella
+flag that makes a missing pin a hard build failure instead of a warning.
 
-1. **Pin the toolchain and hash-pin every dependency** — which Python,
-   which appimagetool, which runtime stub, and every third-party package
-   pulled in at build time, including the project's own build backend:
-   ```bash
-   python -m appimage.build --init --lock
-   ```
-   `--init` writes `python_date`, `appimagetool_sha256`, and
-   `runtime_sha256` to `pyproject.toml`; `--lock` then generates both
-   `pylock.toml` (runtime dependencies) and a build-backend lock file
-   against that now-pinned interpreter, in the same run — `--init` always
-   resolves first internally, regardless of argument order, so `--lock`
-   never pins hashes against a stale/unpinned interpreter. Each of the two
-   can also be run on its own, e.g. to re-pin just one later. Details:
-   [Pinning for cross-machine
-   reproducibility](#pinning-for-cross-machine-reproducibility),
-   [Verified dependencies](#verified-dependencies).
+### The one-command path
 
-2. **Turn on the umbrella flag**, once step 1 is in place and a build has
-   actually succeeded with it:
-   ```toml
-   [tool.appimage.build]
-   reproducible = true
-   ```
-   Deliberately a separate, manual step, never set automatically by
-   `--init --lock` — flipping it turns a missing pin into a hard build
-   failure instead of a warning, which is a policy decision only you
-   should make, not a side effect of resolving some values. Refuses to
-   build unless the step 1 toolchain pins are already set — see [Pinning
-   for cross-machine
-   reproducibility](#pinning-for-cross-machine-reproducibility).
+```bash
+python -m appimage.ctl enable-reproducible
+```
 
-`python -m appimage.build --check` reports where a project stands at any
+Pins the toolchain (`python_date`, `appimagetool_sha256`, `runtime_sha256`
+— same as `init`), generates both `pylock.toml` and the build-backend lock
+file (same as `lock`), then runs a real build against those pins to prove
+they actually work together — and only once that build succeeds, writes
+`reproducible = true` to `pyproject.toml`. Never flips the flag as a side
+effect of merely resolving or locking values — see [The umbrella
+flag](#the-umbrella-flag) for why that distinction matters.
+
+### Piecewise, if you want more control
+
+```bash
+python -m appimage.ctl init
+python -m appimage.ctl lock
+```
+
+`init` writes `python_date`, `appimagetool_sha256`, and `runtime_sha256`
+to `pyproject.toml`; `lock` generates both `pylock.toml` (runtime
+dependencies) and a build-backend lock file against the now-pinned
+interpreter. Each command re-reads `pyproject.toml` from disk when it
+starts, so `lock` picks up whatever `init` just wrote even run as a
+separate invocation afterwards. Either can also be run on its own later,
+e.g. to re-pin just one after a dependency bump. Details: [Pinning for
+cross-machine reproducibility](#pinning-for-cross-machine-reproducibility),
+[Verified dependencies](#verified-dependencies).
+
+### The umbrella flag
+
+```toml
+[tool.appimage]
+reproducible = true
+```
+
+Written automatically by `enable-reproducible` once a build has actually
+succeeded with the pins from `init`/`lock` — or set it by hand after
+verifying a build yourself, if you went the piecewise route. Deliberately
+never set as a side effect of merely resolving or locking values: flipping
+it turns a missing pin into a hard build failure instead of a warning,
+which is a policy decision that should only follow a build that's proven
+to actually work, not the act of writing the pins themselves. Refuses to
+build unless the toolchain pins are already set — see [Pinning for
+cross-machine reproducibility](#pinning-for-cross-machine-reproducibility).
+
+`python -m appimage.ctl check` reports where a project stands at any
 point, without building anything:
 
 ```
 Reproducibility checklist (1/3 ready):
   ✓ Reproducibility: 3/3 pins set
-  ✗ Dependency verification: pylock not set — run --lock to generate pylock.toml
-  ✗ Build backend verification: build_pylock not set — run --lock to generate it alongside pylock.toml
+  ✗ Dependency verification: pylock not set — run 'lock' to generate pylock.toml
+  ✗ Build backend verification: build_pylock not set — run 'lock' to generate it alongside pylock.toml
 ```
 
 Neither layer is required for the byte-identical guarantee itself — they
@@ -69,7 +88,7 @@ and supply-chain verification, and each can be adopted alone.
 ## Why this is hard
 
 An AppImage is an ELF runtime with a SquashFS image appended. Getting a
-byte-identical result out of that pipeline turned out to need five
+byte-identical result out of that pipeline turned out to need six
 independent fixes — any one missing was enough to make two builds differ,
 even with everything else already correct:
 
@@ -84,7 +103,7 @@ even with everything else already correct:
    be left untouched. See [internals.md](internals.md#building-manually)
    for where this was actually found.
 2. **File timestamps.** `mksquashfs` embeds each file's mtime in the
-   packed image. Every file `appimage.build` installs or generates gets
+   packed image. Every file `appimage.ctl` installs or generates gets
    its mtime normalized to a fixed value (`SOURCE_DATE_EPOCH`,
    [the reproducible-builds.org
    convention](https://reproducible-builds.org/specs/source-date-epoch/))
@@ -96,19 +115,41 @@ even with everything else already correct:
    50–100 files (see [AppImageKit
    #929](https://github.com/AppImage/AppImageKit/issues/929)). No amount
    of input normalization fixes this; it's a bug in the tool doing the
-   packing. `appimage.build` defaults to its maintained successor,
+   packing. `appimage.ctl` defaults to its maintained successor,
    [`AppImage/appimagetool`](https://github.com/AppImage/appimagetool),
    which bundles a fixed, modern squashfs-tools.
 4. **appimagetool's own side effects.** Packaging touches a few paths of
    its own (e.g. `.DirIcon`) that live outside the AppDir tree
-   `appimage.build` controls. `SOURCE_DATE_EPOCH` is passed into
+   `appimage.ctl` controls. `SOURCE_DATE_EPOCH` is passed into
    appimagetool's *own* process environment too, not just applied to the
    AppDir beforehand.
 5. **The runtime stub.** Newer appimagetool releases fetch the AppImage
    runtime ELF stub live, over the network, at packaging time — a source
-   of both non-determinism and an unverified download. `appimage.build`
+   of both non-determinism and an unverified download. `appimage.ctl`
    pre-fetches and pins it instead, then hands it to appimagetool via
    `--runtime-file` so no live download happens.
+6. **The build machine's own absolute path.** Three separate mechanisms
+   bake the build directory's absolute path — and with it, typically, the
+   building user's own name via `$HOME` — into files that end up inside
+   the AppImage: `compileall`'s `co_filename`, stray `.pyc` files CPython
+   writes the moment a build step merely *imports* a stdlib module that
+   has none yet, and pip's own install-time bookkeeping (`direct_url.json`,
+   console-script shims) for the locally-installed project. None of these
+   vary the build's *behavior* — only its bytes — but that's still enough
+   to make two builds of the identical source differ if run from two
+   different checkout locations, e.g. two different developers' home
+   directories, or two CI providers with different checkout paths. Fixed
+   by compiling with `-s <site-packages>` to strip the path from every
+   code object, `PYTHONDONTWRITEBYTECODE=1` on every subprocess that runs
+   the bundled interpreter so nothing gets compiled outside that
+   controlled step in the first place, and deleting the two pip artifacts
+   (discovered via each package's own `RECORD` — the same manifest pip
+   wrote when installing it — rather than by guessing at pip's script
+   format, since that format has more than one variant in practice). A
+   final sweep of the whole AppDir for the build path, after all of the
+   above, turns "did this actually work" into something the build itself
+   verifies on every run rather than something that has to be checked by
+   hand.
 
 See [internals.md](internals.md) for exactly where each of these fits in
 the build sequence.
@@ -116,10 +157,10 @@ the build sequence.
 ## Verify it yourself
 
 ```bash
-python -m appimage.build
+python -m appimage.ctl
 mv dist/myapp-x86_64.AppImage /tmp/build-a.AppImage
 rm -rf build dist
-python -m appimage.build
+python -m appimage.ctl
 sha256sum /tmp/build-a.AppImage dist/myapp-x86_64.AppImage
 ```
 
@@ -137,13 +178,13 @@ another machine, or the same machine next month, resolves, unless pinned
 explicitly:
 
 ```toml
-[tool.appimage.build]
+[tool.appimage]
 python_date = "20260211"
 appimagetool_sha256 = "3f9a1c..."
 runtime_sha256 = "1cc49bc..."
 ```
 
-Run `python -m appimage.build --init` to resolve whatever's currently
+Run `python -m appimage.ctl init` to resolve whatever's currently
 available (downloading appimagetool and the runtime file if needed) and
 write both hashes — plus a human-readable `appimagetool_version` label —
 into `pyproject.toml` automatically.
@@ -155,7 +196,7 @@ unverified resolution a hard error instead of a warning, for release
 builds where "give me the exact bits I asked for, or fail" matters more
 than convenience.
 
-Run `python -m appimage.build --reproducible` (after `--init` has written
+Run `python -m appimage.ctl --reproducible` (after `init` has written
 the pins) as a shortcut that enforces all of the above at once: it implies
 `verify_downloads` and `require_zsyncmake` (see
 [configuration.md](configuration.md)), and refuses to build at all if
@@ -165,7 +206,7 @@ defeats cross-machine reproducibility in the first place.
 
 ## Verified dependencies
 
-Everything above pins *appimage.build's own* build tooling — appimagetool,
+Everything above pins *appimage.ctl's own* build tooling — appimagetool,
 the runtime stub, the interpreter. None of it touches how your project's
 third-party dependencies get installed: by default, `pip install
 ".[extras]"` resolves and downloads whatever the index currently serves,
@@ -175,7 +216,7 @@ up inside the AppImage with nothing to catch it.
 One dependency is the exception, verified with no configuration at all:
 the bundled `appimage` runtime module itself (the one AppRun and the
 `--python-*` flags depend on) is always installed pinned to the exact
-version of `appimage.build` doing the build, and its install is
+version of `appimage.ctl` doing the build, and its install is
 hash-verified against the digest PyPI publishes for that release — the
 same free-verification pattern used above for appimagetool/the runtime
 file/the Python archive, since this one dependency's correct hash is
@@ -188,18 +229,18 @@ covers this the normal way instead, since `appimage_pin` is included in
 `pylock` closes that gap:
 
 ```toml
-[tool.appimage.build]
+[tool.appimage]
 pylock = "pylock.toml"
 ```
 
 ```sh
-python -m appimage.build --lock       # generate/refresh pylock.toml
-python -m appimage.build --require-pylock   # abort if pylock isn't set
+python -m appimage.ctl lock              # generate/refresh pylock.toml
+python -m appimage.ctl --require-pylock  # abort if pylock isn't set
 ```
 
-### `--lock` is a thin wrapper, not a new mechanism
+### `lock` is a thin wrapper, not a new mechanism
 
-`--lock` does not implement any hashing or dependency resolution itself.
+`lock` does not implement any hashing or dependency resolution itself.
 It runs `pip lock` (built into pip since 25.1) through the bundled
 python-build-standalone interpreter rather than your own, once for
 runtime dependencies and once for the build backend (below), writing
@@ -212,11 +253,11 @@ build/AppDir/python/bin/python3 -m pip lock \
 ```
 
 Running it through the bundled interpreter, not your local one, is the
-one thing `--lock` adds over typing that command by hand: `pip lock`
+one thing `lock` adds over typing that command by hand: `pip lock`
 resolves wheels for whatever interpreter runs it, so a lock generated with
 your local Python could pin a different platform/ABI than what the
-AppImage actually bundles. `--lock` also reads `extras`/`packages` from
-`[tool.appimage.build]` for you, so that list isn't maintained twice.
+AppImage actually bundles. `lock` also reads `extras`/`packages` from
+`[tool.appimage]` for you, so that list isn't maintained twice.
 
 `appimage==2.0.1` and any `packages` entries are real PyPI distributions
 and stay in the lock with their own hash like any other dependency — only
@@ -228,7 +269,7 @@ output, not a chosen one ("No user-supplied requirements will be handled,
 even if they were dependencies of other user-supplied requirements" per
 its own `--help`) — using it here would have silently dropped
 `appimage`'s and `packages`' own pins too, leaving only their transitive
-dependencies locked. `--lock` instead resolves everything together
+dependencies locked. `lock` instead resolves everything together
 without `--only-deps`, then strips just the local project's entry from
 the resulting file afterwards, identified structurally by its local
 directory source rather than by name.
@@ -254,7 +295,7 @@ won't silently pull in anything beyond what got hashed.
 ### Cooldowns
 
 `pip lock` also accepts `--uploaded-prior-to`, passed through via
-`--uploaded-prior-to PnD` on `--lock` (e.g. `P7D`): excludes packages
+`--uploaded-prior-to PnD` on `lock` (e.g. `P7D`): excludes packages
 published more recently than that window from the resolution, giving the
 community time to catch a compromised release before it gets locked in.
 It only makes sense at generation time — the real build installs exactly
@@ -263,9 +304,9 @@ nothing left to act on.
 
 ### Private package indexes (Artifactory, Nexus, devpi, ...)
 
-Neither `--lock` nor a normal build passes any pip-specific flags for index
+Neither `lock` nor a normal build passes any pip-specific flags for index
 selection or authentication — no `--index-url`, no custom `env=` for the
-subprocess. Every `pip`/`pip lock` call in `appimage.build` inherits the
+subprocess. Every `pip`/`pip lock` call in `appimage.ctl` inherits the
 calling process's environment as-is, so pip's own standard mechanisms
 already work with no configuration on appimage's side:
 
@@ -277,7 +318,7 @@ already work with no configuration on appimage's side:
 
 Point these at an internal Artifactory/Nexus/devpi mirror the same way you
 would for any other pip invocation, and both `packages`/`extras`
-installs and `--lock`'s dependency resolution pick it up automatically.
+installs and `lock`'s dependency resolution pick it up automatically.
 This is deliberate, not just an accident of not having built anything
 else yet: credentials belong in environment/config, not as CLI arguments
 to a subprocess — an argument list can leak to other users on the same
@@ -286,7 +327,7 @@ for that process does not.
 
 There's currently no equivalent of `--build-constraint`-style one-off CLI
 passthrough for occasional, non-persistent overrides (e.g. pointing a
-single `--lock` run at a different index without touching `pip.conf`) —
+single `lock` run at a different index without touching `pip.conf`) —
 only the persistent env/config path above is supported today.
 
 ### Relationship to `reproducible`
@@ -294,14 +335,17 @@ only the persistent env/config path above is supported today.
 `pylock`/`require_pylock` are deliberately independent of `reproducible`
 — hash-pinned dependencies and byte-identical output are separate
 guarantees, and `reproducible` does not imply or require `pylock`. Opt
-into both explicitly if you want both.
+into both explicitly if you want both — `enable-reproducible` happens to
+set up both together as a convenience, but nothing stops you from setting
+`reproducible = true` by hand after a piecewise `init`, without ever
+running `lock`.
 
 ### Known limits
 
 `pip lock` is documented by pip itself as experimental — its behavior may
 change without notice in a future pip release. `pip install -r
 pylock.toml --require-hashes` needs pip >= 26.1 in the bundled
-interpreter; `--lock` checks for pip >= 25.1 (what `pip lock` itself
+interpreter; `lock` checks for pip >= 25.1 (what `pip lock` itself
 needs) before generating, but a build against an existing `pylock.toml`
 with an older bundled pip will fail with a plain pip error rather than
 this tool's own message.
@@ -316,23 +360,23 @@ isolated environment by resolving the project's `[build-system].requires`
 every single build. Unpinned and unverified — the same class of gap
 `pylock` closes for runtime dependencies, just one level down.
 
-`build_pylock` closes it, generated by `--lock` alongside `pylock.toml` —
+`build_pylock` closes it, generated by `lock` alongside `pylock.toml` —
 no separate flag or hand-written file needed:
 
 ```sh
-python -m appimage.build --lock
+python -m appimage.ctl lock
 ```
 
 ```toml
-[tool.appimage.build]
+[tool.appimage]
 build_pylock = "pylock.build.toml"
 ```
 
-`[build-system].requires` changes rarely, so `--lock` re-locks it on
+`[build-system].requires` changes rarely, so `lock` re-locks it on
 every run alongside `pylock.toml` rather than needing a dedicated flag —
 cheap when nothing changed, and it means one command keeps both in sync.
 Point `build_pylock` at whatever path fits your project's own
-conventions; `pylock.build.toml` above is just `--lock`'s default.
+conventions; `pylock.build.toml` above is just `lock`'s default.
 
 Consumed differently from `pylock.toml`: `pip install --build-constraint`
 [doesn't accept the pylock
@@ -365,7 +409,7 @@ project's wheel — it doesn't change how the project's *own*
 unpinned specifier like `"hatchling"` still floats to whatever `pip lock`
 resolves as latest, unless pinned). For most backends, pin
 `[build-system].requires` to an exact version in your own
-`pyproject.toml` too, so `--lock` has one specific release to hash
+`pyproject.toml` too, so `lock` has one specific release to hash
 rather than a moving target — see the [development
 chapter](develop/reproducible-builds.md) for this project's own choice of
 backend and how it's pinned (a bounded range rather than an exact pin,
@@ -375,6 +419,6 @@ wheel — a different, unrelated mechanism from `build_pylock` above).
 
 ## Not covered here
 
-This page is about the AppImages `appimage.build` produces for *your*
+This page is about the AppImages `appimage.ctl` produces for *your*
 project. For the reproducibility of the `appimage` package's own PyPI
 wheel, see the [development chapter](develop/reproducible-builds.md).

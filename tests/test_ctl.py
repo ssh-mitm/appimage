@@ -1,4 +1,4 @@
-"""Unit tests for appimage.build reproducibility features.
+"""Unit tests for appimage.ctl reproducibility features.
 
 All network and subprocess calls are mocked — these tests never touch the
 network or execute real binaries.
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from appimage.build import (
+from appimage.ctl import (
     BuildConfig,
     _ResolvedBuild,
     _normalize_mtimes,
@@ -24,7 +24,9 @@ from appimage.build import (
     _resolve_runtime_file,
     _sha256_file,
     _verify_sha256,
+    _write_reproducible_flag,
     build,
+    enable_reproducible,
     write_config,
 )
 
@@ -135,7 +137,7 @@ def _fake_release_response(digest: str | None) -> MagicMock:
 
 
 def test_resolve_python_url_returns_digest_when_published() -> None:
-    with patch("appimage.build.urllib.request.urlopen", return_value=_fake_release_response("sha256:" + "a" * 64)):
+    with patch("appimage.ctl.urllib.request.urlopen", return_value=_fake_release_response("sha256:" + "a" * 64)):
         url, sha256, resolved_date = _resolve_python_url("3.11", "20260211", "x86_64")
     assert url.endswith("install_only_stripped.tar.gz")
     assert sha256 == "a" * 64
@@ -143,7 +145,7 @@ def test_resolve_python_url_returns_digest_when_published() -> None:
 
 
 def test_resolve_python_url_returns_none_without_digest() -> None:
-    with patch("appimage.build.urllib.request.urlopen", return_value=_fake_release_response(None)):
+    with patch("appimage.ctl.urllib.request.urlopen", return_value=_fake_release_response(None)):
         _url, sha256, _resolved_date = _resolve_python_url("3.11", "20260211", "x86_64")
     assert sha256 is None
 
@@ -179,8 +181,8 @@ def test_resolve_appimagetool_from_path_no_hash_warns_and_skips_download(tmp_pat
     tool_on_path.write_bytes(b"whatever-was-on-path")
     resolved = make_resolved()
 
-    with patch("appimage.build.shutil.which", return_value=str(tool_on_path)), \
-         patch("appimage.build._download") as mock_download, \
+    with patch("appimage.ctl.shutil.which", return_value=str(tool_on_path)), \
+         patch("appimage.ctl._download") as mock_download, \
          caplog.at_level("WARNING"):
         result = _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
 
@@ -195,7 +197,7 @@ def test_resolve_appimagetool_from_path_hash_set_mismatch_raises(tmp_path: Path)
     tool_on_path.write_bytes(b"a-random-binary-from-2019")
     resolved = make_resolved(appimagetool_sha256=digest_of(b"the-expected-binary"))
 
-    with patch("appimage.build.shutil.which", return_value=str(tool_on_path)):
+    with patch("appimage.ctl.shutil.which", return_value=str(tool_on_path)):
         with pytest.raises(RuntimeError):
             _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
 
@@ -205,7 +207,7 @@ def test_resolve_appimagetool_cache_hash_mismatch_raises(tmp_path: Path) -> None
     cache.write_bytes(b"stale-cached-binary")
     resolved = make_resolved(appimagetool_sha256=digest_of(b"the-expected-binary"))
 
-    with patch("appimage.build.shutil.which", return_value=None):
+    with patch("appimage.ctl.shutil.which", return_value=None):
         with pytest.raises(RuntimeError):
             _resolve_appimagetool(resolved, cache, "x86_64")
 
@@ -217,9 +219,9 @@ def test_resolve_appimagetool_download_mismatch_deletes_cache(tmp_path: Path) ->
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"a-different-binary")
 
-    with patch("appimage.build.shutil.which", return_value=None), \
-         patch("appimage.build._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None)), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl.shutil.which", return_value=None), \
+         patch("appimage.ctl._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None)), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         with pytest.raises(RuntimeError):
             _resolve_appimagetool(resolved, cache, "x86_64")
 
@@ -234,9 +236,9 @@ def test_resolve_appimagetool_download_verifies_free_api_digest(tmp_path: Path) 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(content)
 
-    with patch("appimage.build.shutil.which", return_value=None), \
-         patch("appimage.build._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", digest_of(content))), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl.shutil.which", return_value=None), \
+         patch("appimage.ctl._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", digest_of(content))), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         result = _resolve_appimagetool(resolved, cache, "x86_64")
 
     assert result == cache
@@ -257,9 +259,9 @@ def test_resolve_appimagetool_download_uses_arch_map_for_armv7l(tmp_path: Path) 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"content")
 
-    with patch("appimage.build.shutil.which", return_value=None), \
-         patch("appimage.build._fetch_release_asset_digest", side_effect=fake_fetch_digest), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl.shutil.which", return_value=None), \
+         patch("appimage.ctl._fetch_release_asset_digest", side_effect=fake_fetch_digest), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         _resolve_appimagetool(resolved, cache, "armv7l")
 
     assert captured["asset_name"] == "appimagetool-armhf.AppImage"
@@ -308,8 +310,8 @@ def test_resolve_runtime_file_download_verifies_free_api_digest(tmp_path: Path) 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(content)
 
-    with patch("appimage.build._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", digest_of(content))), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", digest_of(content))), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         result = _resolve_runtime_file(resolved, cache, "x86_64")
 
     assert result == cache
@@ -323,8 +325,8 @@ def test_resolve_runtime_file_download_mismatch_deletes_cache(tmp_path: Path) ->
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"a-different-runtime")
 
-    with patch("appimage.build._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", None)), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", None)), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         with pytest.raises(RuntimeError):
             _resolve_runtime_file(resolved, cache, "x86_64")
 
@@ -339,9 +341,9 @@ def test_resolve_runtime_file_no_path_lookup(tmp_path: Path) -> None:
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"content")
 
-    with patch("appimage.build.shutil.which", return_value="/usr/bin/runtime-x86_64") as mock_which, \
-         patch("appimage.build._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", None)), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl.shutil.which", return_value="/usr/bin/runtime-x86_64") as mock_which, \
+         patch("appimage.ctl._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", None)), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         _resolve_runtime_file(resolved, cache, "x86_64")
 
     mock_which.assert_not_called()
@@ -356,7 +358,7 @@ def test_verify_downloads_raises_instead_of_warning_for_appimagetool(tmp_path: P
     tool_on_path.write_bytes(b"whatever-was-on-path")
     resolved = make_resolved(verify_downloads=True)
 
-    with patch("appimage.build.shutil.which", return_value=str(tool_on_path)):
+    with patch("appimage.ctl.shutil.which", return_value=str(tool_on_path)):
         with pytest.raises(RuntimeError, match="could not be verified"):
             _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
 
@@ -392,7 +394,7 @@ def test_verify_downloads_passes_when_hash_configured(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# zsyncmake availability (checked in _resolve, so --check sees it too)
+# zsyncmake availability (checked in _resolve, so `check` sees it too)
 # ---------------------------------------------------------------------------
 
 def _write_minimal_project(tmp_path: Path) -> None:
@@ -409,7 +411,7 @@ def test_zsyncmake_noop_without_update_info(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
     config = BuildConfig()
 
-    with patch("appimage.build.shutil.which", return_value=None):
+    with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
     assert not _has_zsyncmake_message(resolved.warnings)
@@ -420,7 +422,7 @@ def test_zsyncmake_noop_when_found(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
     config = BuildConfig(update_info="zsync|https://example/app.AppImage.zsync")
 
-    with patch("appimage.build.shutil.which", return_value="/usr/bin/zsyncmake"):
+    with patch("appimage.ctl.shutil.which", return_value="/usr/bin/zsyncmake"):
         resolved = _resolve(config, tmp_path)
 
     assert not _has_zsyncmake_message(resolved.warnings)
@@ -431,7 +433,7 @@ def test_zsyncmake_warns_by_default(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
     config = BuildConfig(update_info="zsync|https://example/app.AppImage.zsync")
 
-    with patch("appimage.build.shutil.which", return_value=None):
+    with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
     assert resolved.errors == []
@@ -444,7 +446,7 @@ def test_zsyncmake_errors_with_require_zsyncmake(tmp_path: Path) -> None:
         update_info="zsync|https://example/app.AppImage.zsync", require_zsyncmake=True,
     )
 
-    with patch("appimage.build.shutil.which", return_value=None):
+    with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
     assert not _has_zsyncmake_message(resolved.warnings)
@@ -458,7 +460,7 @@ def test_zsyncmake_warns_not_errors_with_verify_downloads_alone(tmp_path: Path) 
         update_info="zsync|https://example/app.AppImage.zsync", verify_downloads=True,
     )
 
-    with patch("appimage.build.shutil.which", return_value=None):
+    with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
     assert resolved.errors == []
@@ -480,7 +482,7 @@ def test_update_info_suggested_from_source_url(tmp_path: Path) -> None:
     )
     config = BuildConfig()
 
-    with patch("appimage.build.platform.machine", return_value="x86_64"):
+    with patch("appimage.ctl.platform.machine", return_value="x86_64"):
         resolved = _resolve(config, tmp_path)
 
     assert resolved.update_info == ""
@@ -539,7 +541,7 @@ def test_update_info_prefers_preferred_key_over_ambiguous_fallback(tmp_path: Pat
     )
     config = BuildConfig()
 
-    with patch("appimage.build.platform.machine", return_value="x86_64"):
+    with patch("appimage.ctl.platform.machine", return_value="x86_64"):
         resolved = _resolve(config, tmp_path)
 
     assert resolved.update_info_suggested == (
@@ -565,7 +567,7 @@ def test_write_config_writes_suggested_update_info(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
         '[project.urls]\nSource = "https://github.com/acme/myapp"\n'
-        "[tool.appimage.build]\n"
+        "[tool.appimage]\n"
         'app = "myapp"\nentry_point = "myapp"\npython = "3.11"\npython_date = "20260101"\n'
     )
     config = BuildConfig.from_pyproject(tmp_path)
@@ -573,11 +575,11 @@ def test_write_config_writes_suggested_update_info(tmp_path: Path) -> None:
     tool_path = tmp_path / "appimagetool"
     runtime_path = tmp_path / "runtime-x86_64"
 
-    with patch("appimage.build.platform.machine", return_value="x86_64"), \
-         patch("appimage.build._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.build._resolve_runtime_file", return_value=runtime_path), \
-         patch("appimage.build._appimagetool_version_string", return_value="continuous build"), \
-         patch("appimage.build._sha256_file", return_value="c" * 64):
+    with patch("appimage.ctl.platform.machine", return_value="x86_64"), \
+         patch("appimage.ctl._resolve_appimagetool", return_value=tool_path), \
+         patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
+         patch("appimage.ctl._sha256_file", return_value="c" * 64):
         write_config(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
@@ -588,7 +590,7 @@ def test_write_config_does_not_overwrite_existing_update_info(tmp_path: Path) ->
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
         '[project.urls]\nSource = "https://github.com/acme/myapp"\n'
-        "[tool.appimage.build]\n"
+        "[tool.appimage]\n"
         'app = "myapp"\nentry_point = "myapp"\npython = "3.11"\npython_date = "20260101"\n'
         'update_info = "custom|value"\n'
     )
@@ -597,10 +599,10 @@ def test_write_config_does_not_overwrite_existing_update_info(tmp_path: Path) ->
     tool_path = tmp_path / "appimagetool"
     runtime_path = tmp_path / "runtime-x86_64"
 
-    with patch("appimage.build._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.build._resolve_runtime_file", return_value=runtime_path), \
-         patch("appimage.build._appimagetool_version_string", return_value="continuous build"), \
-         patch("appimage.build._sha256_file", return_value="c" * 64):
+    with patch("appimage.ctl._resolve_appimagetool", return_value=tool_path), \
+         patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
+         patch("appimage.ctl._sha256_file", return_value="c" * 64):
         write_config(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
@@ -681,7 +683,7 @@ def test_resolve_python_tarball_local_archive_without_hash_stays_offline(tmp_pat
     archive.write_bytes(b"tarball-content")
     resolved = make_resolved(python_archive=str(archive))
 
-    with patch("appimage.build.urllib.request.urlopen") as mock_urlopen:
+    with patch("appimage.ctl.urllib.request.urlopen") as mock_urlopen:
         result = _resolve_python_tarball(resolved, tmp_path / "cache.tar.gz", "x86_64")
 
     mock_urlopen.assert_not_called()
@@ -693,7 +695,7 @@ def test_resolve_python_tarball_cache_without_hash_stays_offline(tmp_path: Path)
     cache.write_bytes(b"cached-tarball")
     resolved = make_resolved()
 
-    with patch("appimage.build.urllib.request.urlopen") as mock_urlopen:
+    with patch("appimage.ctl.urllib.request.urlopen") as mock_urlopen:
         result = _resolve_python_tarball(resolved, cache, "x86_64")
 
     mock_urlopen.assert_not_called()
@@ -708,8 +710,8 @@ def test_resolve_python_tarball_fresh_download_verifies_free_api_digest(tmp_path
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(content)
 
-    with patch("appimage.build.urllib.request.urlopen", return_value=_fake_release_response("sha256:" + digest_of(content))), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl.urllib.request.urlopen", return_value=_fake_release_response("sha256:" + digest_of(content))), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         result = _resolve_python_tarball(resolved, cache, "x86_64")
 
     assert result == cache
@@ -723,8 +725,8 @@ def test_resolve_python_tarball_fresh_download_mismatch_deletes_cache(tmp_path: 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"tampered-or-corrupted")
 
-    with patch("appimage.build.urllib.request.urlopen", return_value=_fake_release_response("sha256:" + "b" * 64)), \
-         patch("appimage.build._download", side_effect=fake_download):
+    with patch("appimage.ctl.urllib.request.urlopen", return_value=_fake_release_response("sha256:" + "b" * 64)), \
+         patch("appimage.ctl._download", side_effect=fake_download):
         with pytest.raises(RuntimeError):
             _resolve_python_tarball(resolved, cache, "x86_64")
 
@@ -748,49 +750,49 @@ def _fake_pypi_response(sha256: str | None) -> MagicMock:
 
 
 def test_resolve_appimage_pin_sha256_returns_digest_when_published() -> None:
-    from appimage.build import _resolve_appimage_pin_sha256
+    from appimage.ctl import _resolve_appimage_pin_sha256
 
-    with patch("appimage.build.urllib.request.urlopen", return_value=_fake_pypi_response("d" * 64)):
+    with patch("appimage.ctl.urllib.request.urlopen", return_value=_fake_pypi_response("d" * 64)):
         assert _resolve_appimage_pin_sha256("appimage==2.0.1", strict=False) == "d" * 64
 
 
 def test_resolve_appimage_pin_sha256_warns_and_returns_none_on_network_error() -> None:
-    from appimage.build import _resolve_appimage_pin_sha256
+    from appimage.ctl import _resolve_appimage_pin_sha256
 
-    with patch("appimage.build.urllib.request.urlopen", side_effect=OSError("no network")):
+    with patch("appimage.ctl.urllib.request.urlopen", side_effect=OSError("no network")):
         assert _resolve_appimage_pin_sha256("appimage==2.0.1", strict=False) is None
 
 
 def test_resolve_appimage_pin_sha256_raises_when_strict_and_network_fails() -> None:
-    from appimage.build import _resolve_appimage_pin_sha256
+    from appimage.ctl import _resolve_appimage_pin_sha256
 
-    with patch("appimage.build.urllib.request.urlopen", side_effect=OSError("no network")), \
+    with patch("appimage.ctl.urllib.request.urlopen", side_effect=OSError("no network")), \
          pytest.raises(RuntimeError, match="Could not verify"):
         _resolve_appimage_pin_sha256("appimage==2.0.1", strict=True)
 
 
 def test_resolve_appimage_pin_sha256_raises_when_strict_and_no_digest_published() -> None:
-    from appimage.build import _resolve_appimage_pin_sha256
+    from appimage.ctl import _resolve_appimage_pin_sha256
 
-    with patch("appimage.build.urllib.request.urlopen", return_value=_fake_pypi_response(None)), \
+    with patch("appimage.ctl.urllib.request.urlopen", return_value=_fake_pypi_response(None)), \
          pytest.raises(RuntimeError, match="no published wheel digest"):
         _resolve_appimage_pin_sha256("appimage==2.0.1", strict=True)
 
 
 def test_resolve_appimage_pin_sha256_warns_and_returns_none_without_digest() -> None:
-    from appimage.build import _resolve_appimage_pin_sha256
+    from appimage.ctl import _resolve_appimage_pin_sha256
 
-    with patch("appimage.build.urllib.request.urlopen", return_value=_fake_pypi_response(None)):
+    with patch("appimage.ctl.urllib.request.urlopen", return_value=_fake_pypi_response(None)):
         assert _resolve_appimage_pin_sha256("appimage==2.0.1", strict=False) is None
 
 
 def test_install_targets_hash_verifies_appimage_pin_separately(tmp_path: Path) -> None:
-    from appimage.build import _install_targets
+    from appimage.ctl import _install_targets
 
     resolved = make_resolved(install_targets=["appimage==2.0.1", ".", "extra-pkg"])
 
-    with patch("appimage.build._resolve_appimage_pin_sha256", return_value="e" * 64), \
-         patch("appimage.build.subprocess.run") as mock_run:
+    with patch("appimage.ctl._resolve_appimage_pin_sha256", return_value="e" * 64), \
+         patch("appimage.ctl.subprocess.run") as mock_run:
         _install_targets(resolved, tmp_path / "python3", tmp_path)
 
     pin_call, main_call = [c.args[0] for c in mock_run.call_args_list]
@@ -801,12 +803,12 @@ def test_install_targets_hash_verifies_appimage_pin_separately(tmp_path: Path) -
 
 
 def test_install_targets_falls_back_to_unverified_without_digest(tmp_path: Path) -> None:
-    from appimage.build import _install_targets
+    from appimage.ctl import _install_targets
 
     resolved = make_resolved(install_targets=["appimage==2.0.1", "."])
 
-    with patch("appimage.build._resolve_appimage_pin_sha256", return_value=None), \
-         patch("appimage.build.subprocess.run") as mock_run:
+    with patch("appimage.ctl._resolve_appimage_pin_sha256", return_value=None), \
+         patch("appimage.ctl.subprocess.run") as mock_run:
         _install_targets(resolved, tmp_path / "python3", tmp_path)
 
     assert mock_run.call_count == 1
@@ -819,7 +821,7 @@ def test_install_targets_falls_back_to_unverified_without_digest(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 def test_prepare_python_installs_with_no_compile(tmp_path: Path) -> None:
-    from appimage.build import _prepare_python
+    from appimage.ctl import _prepare_python
 
     resolved = make_resolved(install_targets=["appimage==2.0.1", "."])
     appdir = tmp_path / "AppDir"
@@ -827,9 +829,9 @@ def test_prepare_python_installs_with_no_compile(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build.subprocess.run") as mock_run, \
-         patch("appimage.build._resolve_appimage_pin_sha256", return_value=None):
+    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+         patch("appimage.ctl.subprocess.run") as mock_run, \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value=None):
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         _prepare_python(resolved, tarball, appdir, tmp_path)
 
@@ -839,12 +841,12 @@ def test_prepare_python_installs_with_no_compile(tmp_path: Path) -> None:
 
 
 def test_compile_pyc_uses_hash_invalidation(tmp_path: Path) -> None:
-    from appimage.build import _compile_pyc
+    from appimage.ctl import _compile_pyc
 
     resolved = make_resolved(python="3.11")
     appdir = tmp_path / "AppDir"
 
-    with patch("appimage.build.subprocess.run") as mock_run:
+    with patch("appimage.ctl.subprocess.run") as mock_run:
         _compile_pyc(resolved, appdir)
 
     args = mock_run.call_args.args[0]
@@ -859,7 +861,7 @@ def test_compile_pyc_uses_hash_invalidation(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_build_compiles_pyc_after_pre_package_before_appimagetool(tmp_path: Path) -> None:
-    from appimage import build as build_module
+    from appimage import ctl as build_module
 
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
@@ -894,7 +896,7 @@ def test_build_compiles_pyc_after_pre_package_before_appimagetool(tmp_path: Path
 
 
 def test_build_respects_source_date_epoch_env_var(tmp_path: Path) -> None:
-    from appimage import build as build_module
+    from appimage import ctl as build_module
 
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
@@ -926,20 +928,20 @@ def test_build_respects_source_date_epoch_env_var(tmp_path: Path) -> None:
 def test_write_config_pins_appimagetool_when_unset(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
-        '[tool.appimage.build]\napp = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
+        '[tool.appimage]\napp = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
     )
-    from appimage.build import BuildConfig
+    from appimage.ctl import BuildConfig
 
     config = BuildConfig.from_pyproject(tmp_path)
 
     tool_path = tmp_path / "appimagetool"
     runtime_path = tmp_path / "runtime-x86_64"
 
-    with patch("appimage.build._resolve_appimagetool", return_value=tool_path) as mock_resolve_tool, \
-         patch("appimage.build._resolve_runtime_file", return_value=runtime_path) as mock_resolve_runtime, \
-         patch("appimage.build._appimagetool_version_string", return_value="continuous build (commit abc), build 1"), \
-         patch("appimage.build._sha256_file", return_value="c" * 64), \
-         patch("appimage.build._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
+    with patch("appimage.ctl._resolve_appimagetool", return_value=tool_path) as mock_resolve_tool, \
+         patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path) as mock_resolve_runtime, \
+         patch("appimage.ctl._appimagetool_version_string", return_value="continuous build (commit abc), build 1"), \
+         patch("appimage.ctl._sha256_file", return_value="c" * 64), \
+         patch("appimage.ctl._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
         write_config(config, tmp_path)
 
     mock_resolve_tool.assert_called_once()
@@ -954,20 +956,20 @@ def test_write_config_pins_appimagetool_when_unset(tmp_path: Path) -> None:
 def test_write_config_pins_python_date_when_unset(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
-        '[tool.appimage.build]\napp = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
+        '[tool.appimage]\napp = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
     )
-    from appimage.build import BuildConfig
+    from appimage.ctl import BuildConfig
 
     config = BuildConfig.from_pyproject(tmp_path)
 
     tool_path = tmp_path / "appimagetool"
     runtime_path = tmp_path / "runtime-x86_64"
 
-    with patch("appimage.build._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")) as mock_resolve_python, \
-         patch("appimage.build._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.build._resolve_runtime_file", return_value=runtime_path), \
-         patch("appimage.build._appimagetool_version_string", return_value="continuous build"), \
-         patch("appimage.build._sha256_file", return_value="c" * 64):
+    with patch("appimage.ctl._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")) as mock_resolve_python, \
+         patch("appimage.ctl._resolve_appimagetool", return_value=tool_path), \
+         patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
+         patch("appimage.ctl._sha256_file", return_value="c" * 64):
         write_config(config, tmp_path)
 
     mock_resolve_python.assert_called_once()
@@ -979,18 +981,18 @@ def test_write_config_pins_python_date_when_unset(tmp_path: Path) -> None:
 def test_write_config_skips_appimagetool_resolution_when_already_set(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
-        "[tool.appimage.build]\n"
+        "[tool.appimage]\n"
         'app = "myapp"\nentry_point = "myapp"\npython = "3.11"\npython_date = "20260101"\n'
         'appimagetool_sha256 = "deadbeef"\n'
         'runtime_sha256 = "deadbeef"\n'
     )
-    from appimage.build import BuildConfig
+    from appimage.ctl import BuildConfig
 
     config = BuildConfig.from_pyproject(tmp_path)
 
-    with patch("appimage.build._resolve_appimagetool") as mock_resolve_tool, \
-         patch("appimage.build._resolve_runtime_file") as mock_resolve_runtime, \
-         patch("appimage.build._resolve_python_url") as mock_resolve_python:
+    with patch("appimage.ctl._resolve_appimagetool") as mock_resolve_tool, \
+         patch("appimage.ctl._resolve_runtime_file") as mock_resolve_runtime, \
+         patch("appimage.ctl._resolve_python_url") as mock_resolve_python:
         write_config(config, tmp_path)
 
     mock_resolve_tool.assert_not_called()
@@ -1003,25 +1005,25 @@ def test_write_config_does_not_write_unresolvable_entry_point(tmp_path: Path) ->
 
     _resolve_entry_point falls back to *app* as a placeholder value
     alongside an error when [project.scripts] doesn't unambiguously name
-    one — write_config must not persist that guess, or a loud --check
+    one — write_config must not persist that guess, or a loud `check`
     error silently turns into a wrong-but-configured pyproject.toml.
     """
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\n'
         'scripts = { foo = "myapp:foo", bar = "myapp:bar" }\n'
     )
-    from appimage.build import BuildConfig
+    from appimage.ctl import BuildConfig
 
     config = BuildConfig.from_pyproject(tmp_path)
 
     tool_path = tmp_path / "appimagetool"
     runtime_path = tmp_path / "runtime-x86_64"
 
-    with patch("appimage.build._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.build._resolve_runtime_file", return_value=runtime_path), \
-         patch("appimage.build._appimagetool_version_string", return_value="continuous build"), \
-         patch("appimage.build._sha256_file", return_value="c" * 64), \
-         patch("appimage.build._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
+    with patch("appimage.ctl._resolve_appimagetool", return_value=tool_path), \
+         patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
+         patch("appimage.ctl._sha256_file", return_value="c" * 64), \
+         patch("appimage.ctl._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
         write_config(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
@@ -1110,21 +1112,21 @@ def test_build_pylock_noop_when_configured(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_reproducibility_summary_reports_zero_of_three_by_default() -> None:
-    from appimage.build import _reproducibility_summary
+    from appimage.ctl import _reproducibility_summary
 
     resolved = make_resolved()
 
     lines = _reproducibility_summary(resolved)
 
     assert any("Reproducibility: 0/3 pins set" in line for line in lines)
-    assert any("--init" in line for line in lines)
+    assert any("'init'" in line for line in lines)
     assert any("Dependency verification: pylock not set" in line for line in lines)
-    assert any("--lock" in line for line in lines)
+    assert any("'lock'" in line for line in lines)
     assert any("Build backend verification: build_pylock not set" in line for line in lines)
 
 
 def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
-    from appimage.build import _reproducibility_summary
+    from appimage.ctl import _reproducibility_summary
 
     resolved = make_resolved(
         python_date="20260211",
@@ -1137,7 +1139,7 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
     lines = _reproducibility_summary(resolved)
 
     assert any("Reproducibility: 3/3 pins set" in line for line in lines)
-    assert not any("--init" in line for line in lines)
+    assert not any("'init'" in line for line in lines)
     assert any("Dependency verification: pylock set (pylock.toml)" in line for line in lines)
     assert any(
         "Build backend verification: build_pylock set (requirements-build.txt)" in line
@@ -1146,7 +1148,7 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
 
 
 def test_reproducibility_summary_reports_partial_pins() -> None:
-    from appimage.build import _reproducibility_summary
+    from appimage.ctl import _reproducibility_summary
 
     resolved = make_resolved(python_date="20260211")
 
@@ -1156,7 +1158,7 @@ def test_reproducibility_summary_reports_partial_pins() -> None:
 
 
 def test_reproducibility_summary_header_counts_ready_layers() -> None:
-    from appimage.build import _reproducibility_summary
+    from appimage.ctl import _reproducibility_summary
 
     lines = _reproducibility_summary(make_resolved())
     assert lines[0] == "Reproducibility checklist (0/3 ready):"
@@ -1174,7 +1176,7 @@ def test_reproducibility_summary_header_counts_ready_layers() -> None:
 
 
 def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
-    from appimage.build import _reproducibility_summary
+    from appimage.ctl import _reproducibility_summary
 
     lines = _reproducibility_summary(
         make_resolved(
@@ -1195,7 +1197,7 @@ def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
 # ---------------------------------------------------------------------------
 
 def test_prepare_python_uses_pylock_when_configured(tmp_path: Path) -> None:
-    from appimage.build import _prepare_python
+    from appimage.ctl import _prepare_python
 
     (tmp_path / "pylock.toml").write_text("")
     resolved = make_resolved(
@@ -1208,8 +1210,8 @@ def test_prepare_python_uses_pylock_when_configured(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build.subprocess.run") as mock_run:
+    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+         patch("appimage.ctl.subprocess.run") as mock_run:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         _prepare_python(resolved, tarball, appdir, tmp_path)
 
@@ -1225,7 +1227,7 @@ def test_prepare_python_uses_pylock_when_configured(tmp_path: Path) -> None:
 
 
 def test_prepare_python_raises_when_pylock_missing(tmp_path: Path) -> None:
-    from appimage.build import _prepare_python
+    from appimage.ctl import _prepare_python
 
     resolved = make_resolved(pylock="pylock.toml")
     appdir = tmp_path / "AppDir"
@@ -1233,7 +1235,7 @@ def test_prepare_python_raises_when_pylock_missing(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.build.tarfile.open") as mock_tarfile:
+    with patch("appimage.ctl.tarfile.open") as mock_tarfile:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         with pytest.raises(FileNotFoundError):
             _prepare_python(resolved, tarball, appdir, tmp_path)
@@ -1261,7 +1263,7 @@ sha256 = "{"c" * 64}"
 
 
 def test_install_build_pylock_noop_when_unset(tmp_path: Path) -> None:
-    from appimage.build import _install_build_pylock
+    from appimage.ctl import _install_build_pylock
 
     resolved = make_resolved()
 
@@ -1269,7 +1271,7 @@ def test_install_build_pylock_noop_when_unset(tmp_path: Path) -> None:
 
 
 def test_install_build_pylock_raises_when_file_missing(tmp_path: Path) -> None:
-    from appimage.build import _install_build_pylock
+    from appimage.ctl import _install_build_pylock
 
     resolved = make_resolved(build_pylock="pylock.build.toml")
 
@@ -1278,7 +1280,7 @@ def test_install_build_pylock_raises_when_file_missing(tmp_path: Path) -> None:
 
 
 def test_install_build_pylock_when_configured(tmp_path: Path) -> None:
-    from appimage.build import _install_build_pylock
+    from appimage.ctl import _install_build_pylock
 
     (tmp_path / "pylock.build.toml").write_text(_SAMPLE_BUILD_PYLOCK_TOML)
     resolved = make_resolved(build_pylock="pylock.build.toml")
@@ -1294,7 +1296,7 @@ def test_install_build_pylock_when_configured(tmp_path: Path) -> None:
 
 
 def test_pylock_to_build_constraint_skips_local_directory_entries(tmp_path: Path) -> None:
-    from appimage.build import _pylock_to_build_constraint
+    from appimage.ctl import _pylock_to_build_constraint
 
     pylock_path = tmp_path / "pylock.toml"
     pylock_path.write_text(_SAMPLE_PYLOCK_TOML)  # includes a local "demoproj" directory entry
@@ -1307,7 +1309,7 @@ def test_pylock_to_build_constraint_skips_local_directory_entries(tmp_path: Path
 
 
 def test_prepare_python_passes_build_pylock_without_pylock(tmp_path: Path) -> None:
-    from appimage.build import _prepare_python
+    from appimage.ctl import _prepare_python
 
     (tmp_path / "pylock.build.toml").write_text(_SAMPLE_BUILD_PYLOCK_TOML)
     resolved = make_resolved(
@@ -1319,9 +1321,9 @@ def test_prepare_python_passes_build_pylock_without_pylock(tmp_path: Path) -> No
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build.subprocess.run") as mock_run, \
-         patch("appimage.build._resolve_appimage_pin_sha256", return_value=None):
+    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+         patch("appimage.ctl.subprocess.run") as mock_run, \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value=None):
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         _prepare_python(resolved, tarball, appdir, tmp_path)
 
@@ -1332,7 +1334,7 @@ def test_prepare_python_passes_build_pylock_without_pylock(tmp_path: Path) -> No
 
 
 def test_prepare_python_passes_build_pylock_with_pylock(tmp_path: Path) -> None:
-    from appimage.build import _prepare_python
+    from appimage.ctl import _prepare_python
 
     (tmp_path / "pylock.toml").write_text("")
     (tmp_path / "pylock.build.toml").write_text(_SAMPLE_BUILD_PYLOCK_TOML)
@@ -1347,8 +1349,8 @@ def test_prepare_python_passes_build_pylock_with_pylock(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build.subprocess.run") as mock_run:
+    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+         patch("appimage.ctl.subprocess.run") as mock_run:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         _prepare_python(resolved, tarball, appdir, tmp_path)
 
@@ -1364,41 +1366,41 @@ def test_prepare_python_passes_build_pylock_with_pylock(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_pip_version_parses_output(tmp_path: Path) -> None:
-    from appimage.build import _pip_version
+    from appimage.ctl import _pip_version
 
     fake_result = MagicMock(stdout="pip 26.1.2 from /some/path (python 3.13)\n")
-    with patch("appimage.build.subprocess.run", return_value=fake_result):
+    with patch("appimage.ctl.subprocess.run", return_value=fake_result):
         assert _pip_version(tmp_path / "python3") == (26, 1)
 
 
 def test_pip_version_raises_on_unparseable_output(tmp_path: Path) -> None:
-    from appimage.build import _pip_version
+    from appimage.ctl import _pip_version
 
     fake_result = MagicMock(stdout="not a pip version string\n")
-    with patch("appimage.build.subprocess.run", return_value=fake_result), \
+    with patch("appimage.ctl.subprocess.run", return_value=fake_result), \
          pytest.raises(RuntimeError):
         _pip_version(tmp_path / "python3")
 
 
 def test_generate_lock_raises_for_old_pip(tmp_path: Path) -> None:
-    from appimage.build import _generate_lock
+    from appimage.ctl import _generate_lock
 
     resolved = make_resolved(pylock="pylock.toml")
-    with patch("appimage.build._pip_version", return_value=(24, 3)), \
+    with patch("appimage.ctl._pip_version", return_value=(24, 3)), \
          pytest.raises(RuntimeError, match="does not support"):
         _generate_lock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
 
 
 def test_generate_lock_builds_expected_command(tmp_path: Path) -> None:
-    from appimage.build import _generate_lock
+    from appimage.ctl import _generate_lock
 
     resolved = make_resolved(
         install_targets=["appimage==2.0.1", ".", "extra-pkg"], pylock="pylock.toml",
     )
 
-    with patch("appimage.build._pip_version", return_value=(25, 1)), \
-         patch("appimage.build.subprocess.run") as mock_run, \
-         patch("appimage.build._strip_local_directory_entries") as mock_strip:
+    with patch("appimage.ctl._pip_version", return_value=(25, 1)), \
+         patch("appimage.ctl.subprocess.run") as mock_run, \
+         patch("appimage.ctl._strip_local_directory_entries") as mock_strip:
         result = _generate_lock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="P7D")
 
     assert result == tmp_path / "pylock.toml"
@@ -1414,13 +1416,13 @@ def test_generate_lock_builds_expected_command(tmp_path: Path) -> None:
 
 
 def test_generate_lock_omits_uploaded_prior_to_when_unset(tmp_path: Path) -> None:
-    from appimage.build import _generate_lock
+    from appimage.ctl import _generate_lock
 
     resolved = make_resolved(pylock="pylock.toml")
 
-    with patch("appimage.build._pip_version", return_value=(25, 1)), \
-         patch("appimage.build.subprocess.run") as mock_run, \
-         patch("appimage.build._strip_local_directory_entries"):
+    with patch("appimage.ctl._pip_version", return_value=(25, 1)), \
+         patch("appimage.ctl.subprocess.run") as mock_run, \
+         patch("appimage.ctl._strip_local_directory_entries"):
         _generate_lock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
 
     cmd = mock_run.call_args.args[0]
@@ -1466,7 +1468,7 @@ sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 
 def test_strip_local_directory_entries_removes_only_directory_source(tmp_path: Path) -> None:
-    from appimage.build import _strip_local_directory_entries
+    from appimage.ctl import _strip_local_directory_entries
 
     pylock_path = tmp_path / "pylock.toml"
     pylock_path.write_text(_SAMPLE_PYLOCK_TOML)
@@ -1481,7 +1483,7 @@ def test_strip_local_directory_entries_removes_only_directory_source(tmp_path: P
 
 def test_strip_local_directory_entries_keeps_direct_pins_with_hashes(tmp_path: Path) -> None:
     """Regression test: appimage_pin/packages must keep their own hash, not just their deps."""
-    from appimage.build import _strip_local_directory_entries
+    from appimage.ctl import _strip_local_directory_entries
 
     pylock_path = tmp_path / "pylock.toml"
     pylock_path.write_text(_SAMPLE_PYLOCK_TOML)
@@ -1494,7 +1496,7 @@ def test_strip_local_directory_entries_keeps_direct_pins_with_hashes(tmp_path: P
 
 
 def test_strip_local_directory_entries_noop_without_directory_source(tmp_path: Path) -> None:
-    from appimage.build import _strip_local_directory_entries
+    from appimage.ctl import _strip_local_directory_entries
 
     text = (
         'lock-version = "1.0"\ncreated-by = "pip"\n\n'
@@ -1518,33 +1520,33 @@ def _write_project_with_build_system(tmp_path: Path) -> None:
 
 
 def test_generate_build_pylock_raises_for_old_pip(tmp_path: Path) -> None:
-    from appimage.build import _generate_build_pylock
+    from appimage.ctl import _generate_build_pylock
 
     _write_project_with_build_system(tmp_path)
     resolved = make_resolved(build_pylock="pylock.build.toml")
-    with patch("appimage.build._pip_version", return_value=(24, 3)), \
+    with patch("appimage.ctl._pip_version", return_value=(24, 3)), \
          pytest.raises(RuntimeError, match="does not support"):
         _generate_build_pylock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
 
 
 def test_generate_build_pylock_raises_without_build_system_requires(tmp_path: Path) -> None:
-    from appimage.build import _generate_build_pylock
+    from appimage.ctl import _generate_build_pylock
 
     _write_minimal_project(tmp_path)
     resolved = make_resolved(build_pylock="pylock.build.toml")
-    with patch("appimage.build._pip_version", return_value=(25, 1)), \
+    with patch("appimage.ctl._pip_version", return_value=(25, 1)), \
          pytest.raises(RuntimeError, match="build-system"):
         _generate_build_pylock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
 
 
 def test_generate_build_pylock_builds_expected_command(tmp_path: Path) -> None:
-    from appimage.build import _generate_build_pylock
+    from appimage.ctl import _generate_build_pylock
 
     _write_project_with_build_system(tmp_path)
     resolved = make_resolved(build_pylock="pylock.build.toml")
 
-    with patch("appimage.build._pip_version", return_value=(25, 1)), \
-         patch("appimage.build.subprocess.run") as mock_run:
+    with patch("appimage.ctl._pip_version", return_value=(25, 1)), \
+         patch("appimage.ctl.subprocess.run") as mock_run:
         result = _generate_build_pylock(
             resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="P7D",
         )
@@ -1560,20 +1562,20 @@ def test_generate_build_pylock_builds_expected_command(tmp_path: Path) -> None:
 
 
 def test_generate_build_pylock_default_filename(tmp_path: Path) -> None:
-    from appimage.build import _generate_build_pylock
+    from appimage.ctl import _generate_build_pylock
 
     _write_project_with_build_system(tmp_path)
     resolved = make_resolved()
 
-    with patch("appimage.build._pip_version", return_value=(25, 1)), \
-         patch("appimage.build.subprocess.run"):
+    with patch("appimage.ctl._pip_version", return_value=(25, 1)), \
+         patch("appimage.ctl.subprocess.run"):
         result = _generate_build_pylock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
 
     assert result == tmp_path / "pylock.build.toml"
 
 
 def test_write_lock_config_writes_when_unset(tmp_path: Path) -> None:
-    from appimage.build import _write_lock_config
+    from appimage.ctl import _write_lock_config
 
     _write_minimal_project(tmp_path)
     pyproject_path = tmp_path / "pyproject.toml"
@@ -1585,11 +1587,11 @@ def test_write_lock_config_writes_when_unset(tmp_path: Path) -> None:
 
 
 def test_write_lock_config_skips_when_already_set(tmp_path: Path) -> None:
-    from appimage.build import _write_lock_config
+    from appimage.ctl import _write_lock_config
 
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
-        '[tool.appimage.build]\npylock = "custom-lock.toml"\n'
+        '[tool.appimage]\npylock = "custom-lock.toml"\n'
     )
     pyproject_path = tmp_path / "pyproject.toml"
 
@@ -1601,16 +1603,16 @@ def test_write_lock_config_skips_when_already_set(tmp_path: Path) -> None:
 
 
 def test_lock_writes_both_lock_paths_to_pyproject_when_unset(tmp_path: Path) -> None:
-    from appimage.build import lock
+    from appimage.ctl import lock
 
     _write_project_with_build_system(tmp_path)
     config = BuildConfig()
 
-    with patch("appimage.build._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
-         patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build._generate_lock", return_value=tmp_path / "pylock.toml") as mock_generate, \
+    with patch("appimage.ctl._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
+         patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+         patch("appimage.ctl._generate_lock", return_value=tmp_path / "pylock.toml") as mock_generate, \
          patch(
-             "appimage.build._generate_build_pylock", return_value=tmp_path / "pylock.build.toml",
+             "appimage.ctl._generate_build_pylock", return_value=tmp_path / "pylock.build.toml",
          ) as mock_generate_build:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         lock(config, tmp_path)
@@ -1623,21 +1625,21 @@ def test_lock_writes_both_lock_paths_to_pyproject_when_unset(tmp_path: Path) -> 
 
 
 def test_lock_skips_write_when_already_set(tmp_path: Path) -> None:
-    from appimage.build import lock
+    from appimage.ctl import lock
 
     (tmp_path / "pyproject.toml").write_text(
         '[build-system]\nrequires = ["uv_build>=0.12.7,<0.13"]\n'
         'build-backend = "uv_build"\n'
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
-        '[tool.appimage.build]\npylock = "custom-lock.toml"\n'
+        '[tool.appimage]\npylock = "custom-lock.toml"\n'
         'build_pylock = "custom-build-lock.toml"\n'
     )
     config = BuildConfig.from_pyproject(tmp_path)
 
-    with patch("appimage.build._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
-         patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build._generate_lock", return_value=tmp_path / "custom-lock.toml"), \
-         patch("appimage.build._generate_build_pylock", return_value=tmp_path / "custom-build-lock.toml"):
+    with patch("appimage.ctl._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
+         patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+         patch("appimage.ctl._generate_lock", return_value=tmp_path / "custom-lock.toml"), \
+         patch("appimage.ctl._generate_build_pylock", return_value=tmp_path / "custom-build-lock.toml"):
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         lock(config, tmp_path)
 
@@ -1646,3 +1648,60 @@ def test_lock_skips_write_when_already_set(tmp_path: Path) -> None:
     # preceding newline so each is counted only on its own line.
     assert content.count("\npylock =") == 1
     assert content.count("\nbuild_pylock =") == 1
+
+
+def test_write_reproducible_flag_writes_when_unset(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    pyproject_path = tmp_path / "pyproject.toml"
+
+    _write_reproducible_flag(tmp_path)
+
+    content = pyproject_path.read_text()
+    assert "reproducible = true" in content
+
+
+def test_write_reproducible_flag_skips_when_already_set(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        "[tool.appimage]\nreproducible = false\n"
+    )
+
+    _write_reproducible_flag(tmp_path)
+
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert content.count("reproducible =") == 1
+    assert "reproducible = false" in content
+
+
+def test_enable_reproducible_writes_flag_only_after_successful_build(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    with patch("appimage.ctl.write_config") as mock_write_config, \
+         patch("appimage.ctl.lock") as mock_lock, \
+         patch("appimage.ctl.build") as mock_build:
+        enable_reproducible(config, tmp_path, uploaded_prior_to="P7D")
+
+    mock_write_config.assert_called_once_with(config, tmp_path)
+    mock_lock.assert_called_once()
+    assert mock_lock.call_args.kwargs["uploaded_prior_to"] == "P7D"
+    mock_build.assert_called_once()
+    built_config = mock_build.call_args.args[0]
+    assert built_config.reproducible is True
+
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert "reproducible = true" in content
+
+
+def test_enable_reproducible_does_not_write_flag_when_build_fails(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    with patch("appimage.ctl.write_config"), \
+         patch("appimage.ctl.lock"), \
+         patch("appimage.ctl.build", side_effect=SystemExit(1)):
+        with pytest.raises(SystemExit):
+            enable_reproducible(config, tmp_path)
+
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert "reproducible" not in content

@@ -1,7 +1,7 @@
 # How AppImages are built
 
 This page explains the mechanics behind AppImage packaging for Python applications — both the
-manual process and what `appimage.build` automates. Understanding the manual steps makes it
+manual process and what `appimage.ctl` automates. Understanding the manual steps makes it
 clear what the module does and why each piece exists.
 
 ## What an AppImage is
@@ -85,7 +85,7 @@ the same `install_only_stripped` artifact described here.
 
 ## Building manually
 
-The following steps reproduce what `appimage.build` does, without using the module.
+The following steps reproduce what `appimage.ctl` does, without using the module.
 Each step can be run and verified independently. Requirements: `curl`, `tar`, a Linux host.
 
 Set these variables in your shell before running the steps below. Adjust `APP`,
@@ -170,7 +170,7 @@ The `appimage` package is the runtime component that handles entry point dispatc
 
 `--no-compile` skips pip's usual bytecode compilation, which invalidates each `.pyc`
 against the *install-time source mtime* — a value that differs on every build even
-when the installed content is identical. `appimage.build` compiles bytecode itself,
+when the installed content is identical. `appimage.ctl` compiles bytecode itself,
 once, at the very end of AppDir assembly (after any hooks have run), using
 `compileall --invalidation-mode unchecked-hash` so a `.pyc`'s validity is tied to a
 hash of its source instead:
@@ -281,7 +281,7 @@ convert -size 256x256 xc:gray build/AppDir/${APP}.png
 ### Step 8 — Download appimagetool and the runtime stub
 
 `appimagetool` is the official tool for packing an AppDir into a SquashFS-based AppImage.
-It is distributed as a self-contained AppImage itself. `appimage.build` uses
+It is distributed as a self-contained AppImage itself. `appimage.ctl` uses
 [`AppImage/appimagetool`](https://github.com/AppImage/appimagetool) — the maintained
 successor to `AppImage/AppImageKit`'s classic `appimagetool` — because AppImageKit's
 bundled `mksquashfs` has a documented non-deterministic multi-threaded compression bug
@@ -313,11 +313,11 @@ build is published — but unlike AppImageKit's old `continuous` tag, GitHub *do
 publish a sha256 digest per asset for both of these repos via its Releases API, so a
 fresh download can be verified against it at no extra cost. Downloading either one
 unpinned still means two builds run at different times, or on different machines, can
-end up packing with different binaries — the one piece of the pipeline `appimage.build`
+end up packing with different binaries — the one piece of the pipeline `appimage.ctl`
 cannot make reproducible purely through AppDir normalization. Set `appimagetool_sha256`
-and `runtime_sha256` in `[tool.appimage.build]` (or run `--init` to write both
+and `runtime_sha256` in `[tool.appimage]` (or run `init` to write both
 automatically from whatever's currently resolved) to pin and verify them; without a
-pin, `appimage.build` still logs the sha256 of whichever binaries it used, so they can
+pin, `appimage.ctl` still logs the sha256 of whichever binaries it used, so they can
 be copied into config later.
 
 ### Step 9 — Pack the AppImage
@@ -332,18 +332,18 @@ runtime (a small ELF binary that mounts and executes it — `--runtime-file` sup
 copy from Step 8 instead of triggering another live download), and writes the result as
 a single executable file.
 
-## What `appimage.build` automates
+## What `appimage.ctl` automates
 
-`python -m appimage.build` performs the same steps as described above, with these
+`python -m appimage.ctl` performs the same steps as described above, with these
 additions:
 
 **Configuration resolution** — app name, entry point, and Python version are read from
-`[project]` in `pyproject.toml`. Running `--check` shows exactly what was detected and from
+`[project]` in `pyproject.toml`. Running `check` shows exactly what was detected and from
 where before anything is built.
 
 **GitHub API lookup** — the module queries the python-build-standalone releases API to find
 the correct `install_only_stripped` asset for the current architecture and the requested
-Python minor version. Passing `python_date` in `[tool.appimage.build]` pins the exact
+Python minor version. Passing `python_date` in `[tool.appimage]` pins the exact
 release tag. A freshly downloaded tarball is also verified against the sha256 digest
 GitHub publishes for the asset (or against `python_sha256`, if set) — no extra network
 request needed.
@@ -369,7 +369,7 @@ passed via `--runtime-file`, so appimagetool never triggers its own live downloa
 third-party dependencies and the project's own `[build-system].requires` backend are
 installed hash-verified (`pip install --require-hashes` / `--build-constraint`)
 instead of resolved live from whatever the index currently serves. Generated via
-`--lock`; see [Reproducible builds](reproducible-builds.md#verified-dependencies) for
+`lock`; see [Reproducible builds](reproducible-builds.md#verified-dependencies) for
 the full mechanism.
 
 **Caching** — the Python tarball, `appimagetool` binary, and runtime file are all
@@ -377,11 +377,11 @@ cached in `build/` and reused on subsequent builds.
 
 **AppRun generation** — the AppRun script is generated from a template that also handles
 the `squashfs-root` fallback for environments without FUSE (containers, some CI systems),
-and injects any extra environment variables defined under `[tool.appimage.build.env]`.
+and injects any extra environment variables defined under `[tool.appimage.env]`.
 
 **Desktop file generation** — the `.desktop` file is generated from `pyproject.toml`
 metadata (`name`, `description`). A custom file can be provided via the `desktop` key in
-`[tool.appimage.build]`.
+`[tool.appimage]`.
 
 **Lifecycle hooks** — shell scripts can run after `pip install` (`post_install`) or after
 all files are in place but before `appimagetool` runs (`pre_package`). The `APPDIR`
@@ -390,7 +390,7 @@ Bytecode compilation (above) runs after `pre_package`, so a hook that edits an i
 package's source is still reflected in the compiled `.pyc`.
 
 **Extra files** — arbitrary files or directories are copied into the AppDir via
-`[tool.appimage.build.extra_files]`.
+`[tool.appimage.extra_files]`.
 
 ## The runtime module
 

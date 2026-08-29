@@ -28,28 +28,29 @@ the Python 3.11–3.14 matrix) — a change isn't done until this passes.
 
 The fastest way to confirm a change actually works end to end is building
 the minimal example project in `examples/myapp/` with your working copy of
-`appimage.build`, rather than a published release:
+`appimage.ctl`, rather than a published release:
 
 ```bash
-hatch run appimage-build --project-dir examples/myapp
+hatch run appimagectl --project-dir examples/myapp
 ./examples/myapp/dist/myapp-x86_64.AppImage
 ```
 
-`hatch run appimage-build` runs the `appimage-build` console script from
+`hatch run appimagectl` runs the `appimagectl` console script from
 inside the `lint`/`test` env, which has your checkout installed — so it
-picks up local changes to `appimage/build/` immediately, no reinstall step
+picks up local changes to `appimage/ctl/` immediately, no reinstall step
 needed. If you only need to see what would be built without actually
-packaging anything, use `--check` instead.
+packaging anything, use `check` instead.
 
 For a change that touches build output determinism specifically (bytecode
-handling, mtime normalization, appimagetool/runtime resolution), build
-twice and diff:
+handling, mtime normalization, appimagetool/runtime resolution, or the
+build-path scrubbing that keeps output independent of where the checkout
+lives), build twice and diff:
 
 ```bash
-hatch run appimage-build --project-dir examples/myapp
+hatch run appimagectl --project-dir examples/myapp
 mv examples/myapp/dist/myapp-x86_64.AppImage /tmp/build-a.AppImage
 rm -rf examples/myapp/build examples/myapp/dist
-hatch run appimage-build --project-dir examples/myapp
+hatch run appimagectl --project-dir examples/myapp
 sha256sum /tmp/build-a.AppImage examples/myapp/dist/myapp-x86_64.AppImage
 ```
 

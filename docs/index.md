@@ -23,7 +23,7 @@ It bundles a complete Python distribution from [python-build-standalone](https:/
 ```{note}
 AppImage is a Linux-only format. Building and running AppImages requires Linux.
 Supported architectures: **x86_64**, **aarch64**, **armv7**.
-[appimagetool](https://github.com/AppImage/appimagetool) is resolved automatically: if it is already on `PATH` it is used as-is; otherwise the build cache is checked, and finally it is downloaded. The same caching logic applies to the bundled Python distribution. Set `appimagetool_sha256` in `[tool.appimage.build]` to verify whichever binary gets resolved, regardless of source — see [Reproducible builds](reproducible-builds.md).
+[appimagetool](https://github.com/AppImage/appimagetool) is resolved automatically: if it is already on `PATH` it is used as-is; otherwise the build cache is checked, and finally it is downloaded. The same caching logic applies to the bundled Python distribution. Set `appimagetool_sha256` in `[tool.appimage]` to verify whichever binary gets resolved, regardless of source — see [Reproducible builds](reproducible-builds.md).
 ```
 
 ## Install
@@ -35,19 +35,19 @@ pip install appimage
 ## Build
 
 ```sh
-python -m appimage.build
+python -m appimage.ctl
 ```
 
 `app`, `entry_point`, and `python` version are detected automatically from `[project]` in your existing `pyproject.toml` — no appimage-specific configuration required. The `.desktop` file and AppRun script are generated automatically. If no icon is found a built-in default icon is used — add `myapp.png` to your project root to use your own.
 
 The AppImage is written to `dist/myapp-x86_64.AppImage` (or the matching architecture name).
 
-> **Tip:** `appimage-build` is also available as a standalone command after installation.
+> **Tip:** `appimagectl` is also available as a standalone command after installation — `python -m appimage.ctl` and `appimagectl` behave identically.
 
 ## Check what was detected
 
 ```sh
-python -m appimage.build --check
+python -m appimage.ctl check
 ```
 
 ```
@@ -62,9 +62,9 @@ Build configuration:
   dist_dir:       dist                                 [default]
 
   Reproducibility checklist (0/3 ready):
-    ✗ Reproducibility: 0/3 pins set (python_date, appimagetool_sha256, runtime_sha256) — run --init to resolve and pin them
-    ✗ Dependency verification: pylock not set — run --lock to generate pylock.toml
-    ✗ Build backend verification: build_pylock not set — run --lock to generate it alongside pylock.toml
+    ✗ Reproducibility: 0/3 pins set (python_date, appimagetool_sha256, runtime_sha256) — run 'init' to resolve and pin them
+    ✗ Dependency verification: pylock not set — run 'lock' to generate pylock.toml
+    ✗ Build backend verification: build_pylock not set — run 'lock' to generate it alongside pylock.toml
 ```
 
 None of that is required to build — see [Reproducible builds](reproducible-builds.md) for what each checklist line means and how to close it.
@@ -72,7 +72,7 @@ None of that is required to build — see [Reproducible builds](reproducible-bui
 ## Write detected values to pyproject.toml
 
 ```sh
-python -m appimage.build --init
+python -m appimage.ctl init
 ```
 
 Adds only the auto-detected fields that are not already set — so you can review and adjust them.

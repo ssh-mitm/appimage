@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myapp-setuptools"
+version = "0.1.0"
+description = "Example project using the setuptools build backend, for testing appimagectl reproducibility with it"
+requires-python = ">=3.11"
+
+[project.scripts]
+myapp-setuptools = "myapp_setuptools:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["myapp_setuptools*"]

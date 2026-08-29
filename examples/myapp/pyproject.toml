@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "myapp"
 version = "0.1.0"
-description = "Minimal example project for appimage-build"
+description = "Minimal example project for appimagectl"
 requires-python = ">=3.11"
 
 [project.scripts]

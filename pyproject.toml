@@ -39,7 +39,7 @@ docs = [
 ]
 
 [project.scripts]
-appimage-build = "appimage.build.__main__:main"
+appimagectl = "appimage.ctl.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/ssh-mitm/appimage"
@@ -120,7 +120,7 @@ disable = [
 [tool.pylint.design]
 max-args = 7
 max-locals = 26
-max-module-lines = 2250
+max-module-lines = 2600
 
 [tool.pylint.MASTER]
 load-plugins = "pylint.extensions.docparams"

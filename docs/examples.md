@@ -4,7 +4,7 @@ A minimal working example lives in [`examples/myapp/`](https://github.com/ssh-mi
 
 ## Minimal project
 
-The example shows the smallest possible project structure that `appimage-build` can package:
+The example shows the smallest possible project structure that `appimagectl` can package:
 
 ```
 examples/myapp/
@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 [project]
 name = "myapp"
 version = "0.1.0"
-description = "Minimal example project for appimage-build"
+description = "Minimal example project for appimagectl"
 requires-python = ">=3.11"
 
 [project.scripts]
@@ -40,13 +40,13 @@ def main() -> None:
     print("Hello from AppImage!")
 ```
 
-No `[tool.appimage.build]` section is needed — `app`, `entry_point`, and `python` are all detected automatically from the `[project]` table.
+No `[tool.appimage]` section is needed — `app`, `entry_point`, and `python` are all detected automatically from the `[project]` table.
 
 ## Build the example
 
 ```sh
 cd examples/myapp
-python -m appimage.build
+python -m appimage.ctl
 ```
 
 The AppImage is written to `examples/myapp/dist/myapp-x86_64.AppImage`.
@@ -56,7 +56,7 @@ The AppImage is written to `examples/myapp/dist/myapp-x86_64.AppImage`.
 When building in a network-restricted environment or sharing a cache across builds, point the tool to local copies of appimagetool, the runtime file, and the Python distribution — all three, since appimagetool alone still tries to fetch the runtime file live over the network unless one is supplied:
 
 ```sh
-python -m appimage.build \
+python -m appimage.ctl \
   --appimagetool /opt/appimagetool-x86_64.AppImage \
   --appimagetool-sha256 3f9a1c...  \
   --runtime-file /opt/runtime-x86_64 \
@@ -68,7 +68,7 @@ python -m appimage.build \
 The same paths can be set permanently in `pyproject.toml`:
 
 ```toml
-[tool.appimage.build]
+[tool.appimage]
 appimagetool = "/opt/appimagetool-x86_64.AppImage"
 appimagetool_sha256 = "3f9a1c..."
 runtime_file = "/opt/runtime-x86_64"

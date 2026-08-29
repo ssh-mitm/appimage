@@ -1,6 +1,6 @@
 # Configuration
 
-All options go in `[tool.appimage.build]` inside `pyproject.toml`. Every key is optional — omitted keys are resolved automatically from `[project]` metadata.
+All options go in `[tool.appimage]` inside `pyproject.toml`. Every key is optional — omitted keys are resolved automatically from `[project]` metadata.
 
 ## Build options
 
@@ -17,9 +17,9 @@ All options go in `[tool.appimage.build]` inside `pyproject.toml`. Every key is 
 | `apprun` | *(generated)* | Path to a custom AppRun script. |
 | `build_dir` | `"build"` | Directory for intermediate artefacts (Python tarball, appimagetool, runtime file). |
 | `dist_dir` | `"dist"` | Directory where the finished AppImage is written. |
-| `update_info` | — | Update information string passed to appimagetool via `-u` (e.g. for zsync). When unset and an unambiguous GitHub repo can be identified from `[project.urls]`, a `gh-releases-zsync` value is suggested via `--check` and written by `--init` — never applied to a live build on its own. |
+| `update_info` | — | Update information string passed to appimagetool via `-u` (e.g. for zsync). When unset and an unambiguous GitHub repo can be identified from `[project.urls]`, a `gh-releases-zsync` value is suggested via `check` and written by `init` — never applied to a live build on its own. |
 | `appimagetool` | — | Path to a local appimagetool binary. When omitted, `PATH` is searched first, then the build cache, and finally a download. |
-| `appimagetool_version` | — | Informational label recording which appimagetool build `appimagetool_sha256` corresponds to. Written automatically by `--init`. |
+| `appimagetool_version` | — | Informational label recording which appimagetool build `appimagetool_sha256` corresponds to. Written automatically by `init`. |
 | `appimagetool_sha256` | — | Expected sha256 of the appimagetool binary. When set, verified against whichever binary is resolved (explicit path, `PATH`, build cache, or download) — a mismatch aborts the build. A fresh download is auto-verified against GitHub's published digest even when unset; only a config-path/`PATH`/cache resolution with no pin falls back to an unverified warning logging its actual hash. |
 | `python_archive` | — | Path to a local python-build-standalone tarball. When omitted, the build cache is checked first, then a download. |
 | `python_sha256` | — | Expected sha256 of the python-build-standalone tarball. Fresh downloads are already verified against the digest GitHub publishes per release, even without this set; set explicitly to also verify a local `python_archive` or a cached tarball. |
@@ -27,20 +27,20 @@ All options go in `[tool.appimage.build]` inside `pyproject.toml`. Every key is 
 | `runtime_sha256` | — | Expected sha256 of the runtime file, verified the same way as `appimagetool_sha256`. |
 | `verify_downloads` | `false` | Abort the build instead of warning whenever appimagetool, the runtime file, or the Python archive would otherwise be used unverified. |
 | `require_zsyncmake` | `false` | Abort the build instead of warning when `update_info` is set but `zsyncmake` is not on `PATH` (no `.zsync` delta-update file would be generated). No effect when `update_info` is empty. |
-| `pylock` | — | Path to a hash-pinned `pylock.toml`, relative to the project root. When set, third-party dependencies are installed with `pip install --require-hashes` instead of a live, unverified resolution. Generate it with `--lock` — see [Verified dependencies](reproducible-builds.md#verified-dependencies). |
+| `pylock` | — | Path to a hash-pinned `pylock.toml`, relative to the project root. When set, third-party dependencies are installed with `pip install --require-hashes` instead of a live, unverified resolution. Generate it with `lock` — see [Verified dependencies](reproducible-builds.md#verified-dependencies). |
 | `require_pylock` | `false` | Abort the build instead of warning when `pylock` is not set. |
-| `build_pylock` | — | Path to a hash-pinned pylock-format file constraining the packaged project's own `[build-system].requires` (e.g. `hatchling`, `setuptools`, `uv_build`). When set, converted to a classic hash-pinned constraints file and passed as `pip install --build-constraint`, so the isolated build environment pip creates for installing the project's own source is hash-verified too, instead of resolved live — the build stays isolated rather than reusing the main interpreter. Generate it with `--lock`, alongside `pylock.toml` — see [Verified build backend](reproducible-builds.md#verified-build-backend). |
+| `build_pylock` | — | Path to a hash-pinned pylock-format file constraining the packaged project's own `[build-system].requires` (e.g. `hatchling`, `setuptools`, `uv_build`). When set, converted to a classic hash-pinned constraints file and passed as `pip install --build-constraint`, so the isolated build environment pip creates for installing the project's own source is hash-verified too, instead of resolved live — the build stays isolated rather than reusing the main interpreter. Generate it with `lock`, alongside `pylock.toml` — see [Verified build backend](reproducible-builds.md#verified-build-backend). |
 | `require_build_pylock` | `false` | Abort the build instead of warning when `build_pylock` is not set. |
-| `reproducible` | `false` | Shortcut for a build that's reproducible across machines and over time: implies `verify_downloads` and `require_zsyncmake`, and additionally requires `python_date`, `appimagetool_sha256`, and `runtime_sha256` to already be set — resolving those three fresh on every build is exactly what defeats cross-machine reproducibility. Run `--init` first to write them; `reproducible` itself never resolves or writes values. Deliberately independent of `pylock`/`require_pylock` — dependency hash-pinning and byte-identical output are separate concerns; opt into both explicitly. |
+| `reproducible` | `false` | Shortcut for a build that's reproducible across machines and over time: implies `verify_downloads` and `require_zsyncmake`, and additionally requires `python_date`, `appimagetool_sha256`, and `runtime_sha256` to already be set — resolving those three fresh on every build is exactly what defeats cross-machine reproducibility. Run `init` first to write them; `reproducible` itself never resolves or writes values. Deliberately independent of `pylock`/`require_pylock` — dependency hash-pinning and byte-identical output are separate concerns; opt into both explicitly. |
 
 ## Coming from python-appimage or a custom build script
 
-Most of `[tool.appimage.build]` never needs to be written by hand when switching from another Python-to-AppImage setup — `app`, `entry_point`, `python`, `icon`, and `desktop` are all auto-detected from `[project]` metadata and standard file locations (see the table above), the same way they would be for a project that never had an AppImage build before.
+Most of `[tool.appimage]` never needs to be written by hand when switching from another Python-to-AppImage setup — `app`, `entry_point`, `python`, `icon`, and `desktop` are all auto-detected from `[project]` metadata and standard file locations (see the table above), the same way they would be for a project that never had an AppImage build before.
 
 For example, [ssh-mitm](https://github.com/ssh-mitm/ssh-mitm) used to build its AppImage with a hand-rolled `appimage/build.sh` (hardcoding a python-build-standalone download URL, an appimagetool download URL, and a `pip install` invocation) plus a separate `appimage/AppRun` and `appimage/ssh-mitm.desktop`. Switching to `appimage` deleted all three files; the entire addition to `pyproject.toml` was:
 
 ```toml
-[tool.appimage.build]
+[tool.appimage]
 extras = ["production"]
 python_date = "20260211"
 update_info = "gh-releases-zsync|ssh-mitm|ssh-mitm|latest|ssh-mitm-x86_64.AppImage.zsync"
@@ -57,7 +57,7 @@ A python-appimage "recipe" folder (`requirements.txt`, a `.desktop` file, an ico
 Extra environment variables are exported in the generated AppRun script:
 
 ```toml
-[tool.appimage.build.env]
+[tool.appimage.env]
 MY_PLUGIN_PATH = "/opt/plugins"
 DEBUG = "0"
 ```
@@ -67,7 +67,7 @@ DEBUG = "0"
 Copy additional files or directories into the AppDir:
 
 ```toml
-[tool.appimage.build.extra_files]
+[tool.appimage.extra_files]
 "assets/" = "assets/"
 "config.toml" = "config.toml"
 ```
@@ -79,7 +79,7 @@ Keys are source paths relative to the project root; values are destination paths
 Shell scripts called at specific points during the build. The `APPDIR` environment variable is set to the AppDir path when the hook runs.
 
 ```toml
-[tool.appimage.build.hooks]
+[tool.appimage.hooks]
 post_install = "scripts/post_install.sh"   # after pip install, before assets are copied
 pre_package  = "scripts/pre_package.sh"    # after all files are in place, before appimagetool
 ```
@@ -94,6 +94,6 @@ compiled bytecode.
 When `apprun` is set, the file is copied as-is instead of generating one from the template. This gives full control over environment setup and the launch command:
 
 ```toml
-[tool.appimage.build]
+[tool.appimage]
 apprun = "packaging/AppRun"
 ```

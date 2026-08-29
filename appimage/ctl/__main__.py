@@ -1,5 +1,5 @@
 # Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
-"""Entry point for ``python -m appimage.build``."""
+"""Entry point for ``python -m appimage.ctl`` (also installed as ``appimagectl``)."""
 
 import argparse
 import logging
@@ -7,55 +7,18 @@ import sys
 from pathlib import Path
 from typing import Final
 
-from appimage.build import BuildConfig, build, check, lock, write_config
+from appimage.ctl import (
+    BuildConfig,
+    build,
+    check,
+    enable_reproducible,
+    lock,
+    write_config,
+)
 
 
-def _parse_args() -> argparse.Namespace:
-    """Parse command line arguments.
-
-    Returns
-    -------
-    argparse.Namespace
-        Parsed arguments.
-
-    """
-    parser = argparse.ArgumentParser(
-        prog="python -m appimage.build",
-        description="Build a Python application as a self-contained AppImage.",
-    )
-
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help=(
-            "Show resolved configuration and exit without building. "
-            "Cannot be combined with --init/--lock."
-        ),
-    )
-    parser.add_argument(
-        "--init",
-        action="store_true",
-        help=(
-            "Write auto-detected values, including the toolchain "
-            "reproducibility pins (python_date, appimagetool_sha256, "
-            "runtime_sha256), to pyproject.toml and exit. Combine with "
-            "--lock to also generate both lock files against the "
-            "now-pinned interpreter in the same run: --init --lock."
-        ),
-    )
-    parser.add_argument(
-        "--lock",
-        action="store_true",
-        help=(
-            "Generate hash-pinned lock files for third-party dependencies "
-            "(pylock.toml) and the project's own build backend "
-            "(build_pylock, via 'pip lock', run through the bundled "
-            "interpreter) and exit. Writes 'pylock'/'build_pylock' to "
-            "pyproject.toml for whichever isn't already set. Combine with "
-            "--init to pin the toolchain first: --init --lock."
-        ),
-    )
-
+def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the build-configuration overrides shared by every subcommand."""
     parser.add_argument(
         "--app",
         metavar="NAME",
@@ -120,7 +83,7 @@ def _parse_args() -> argparse.Namespace:
         metavar="SHA256",
         help=(
             "Expected sha256 of the appimagetool binary. Verified regardless of "
-            "how it was resolved; a mismatch aborts the build. --init writes this "
+            "how it was resolved; a mismatch aborts the build. 'init' writes this "
             "automatically."
         ),
     )
@@ -189,7 +152,7 @@ def _parse_args() -> argparse.Namespace:
         metavar="PATH",
         help=(
             "Path to a hash-pinned pylock.toml for third-party dependencies "
-            "(overrides pyproject.toml). Generate it with --lock."
+            "(overrides pyproject.toml). Generate it with 'lock'."
         ),
     )
     parser.add_argument(
@@ -211,7 +174,7 @@ def _parse_args() -> argparse.Namespace:
             "pyproject.toml). Installed with 'pip install --require-hashes' "
             "before the project itself is installed with "
             "'--no-build-isolation', so its otherwise-fresh isolated build "
-            "environment is hash-verified too. Generate it with --lock, "
+            "environment is hash-verified too. Generate it with 'lock', "
             "alongside pylock.toml."
         ),
     )
@@ -226,26 +189,91 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--uploaded-prior-to",
-        dest="uploaded_prior_to",
-        metavar="PnD",
-        help=(
-            "Only used with --lock: passed through to 'pip lock "
-            "--uploaded-prior-to' as a cooldown window (ISO 8601 PnD "
-            "format, e.g. P7D) — excludes packages published more "
-            "recently than that from the resolution."
-        ),
-    )
-    parser.add_argument(
         "--reproducible",
         dest="reproducible",
         action="store_true",
         help=(
-            "Shortcut for a build that is reproducible across machines and "
-            "over time: implies --verify-downloads and --require-zsyncmake, "
-            "and requires python_date, appimagetool_sha256, and "
-            "runtime_sha256 to already be set (run --init first to write "
-            "them). Does not resolve or write any values itself."
+            "Enforce a build that is reproducible across machines and over "
+            "time: implies --verify-downloads and --require-zsyncmake, and "
+            "requires python_date, appimagetool_sha256, and runtime_sha256 "
+            "to already be set (run 'init' first to write them). Does not "
+            "resolve or write any values itself — see the 'enable-reproducible' "
+            "command to also persist this permanently."
+        ),
+    )
+
+
+def _add_uploaded_prior_to_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the ``--uploaded-prior-to`` cooldown option used by ``lock``/``enable-reproducible``."""
+    parser.add_argument(
+        "--uploaded-prior-to",
+        dest="uploaded_prior_to",
+        metavar="PnD",
+        help=(
+            "Cooldown window passed through to 'pip lock --uploaded-prior-to' "
+            "(ISO 8601 PnD format, e.g. P7D) — excludes packages published "
+            "more recently than that from the resolution."
+        ),
+    )
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed arguments.
+
+    """
+    common = argparse.ArgumentParser(add_help=False)
+    _add_common_arguments(common)
+
+    lock_only = argparse.ArgumentParser(add_help=False)
+    _add_uploaded_prior_to_argument(lock_only)
+
+    parser = argparse.ArgumentParser(
+        prog="python -m appimage.ctl",
+        description="Build a Python application as a self-contained AppImage.",
+        parents=[common],
+    )
+    subparsers = parser.add_subparsers(
+        dest="command",
+        metavar="COMMAND",
+        help="Defaults to building the AppImage when omitted.",
+    )
+    subparsers.add_parser(
+        "check",
+        parents=[common],
+        help="Show resolved configuration and exit without building.",
+    )
+    subparsers.add_parser(
+        "init",
+        parents=[common],
+        help=(
+            "Write auto-detected values, including the toolchain "
+            "reproducibility pins (python_date, appimagetool_sha256, "
+            "runtime_sha256), to pyproject.toml and exit."
+        ),
+    )
+    subparsers.add_parser(
+        "lock",
+        parents=[common, lock_only],
+        help=(
+            "Generate hash-pinned lock files for third-party dependencies "
+            "(pylock.toml) and the project's own build backend "
+            "(build_pylock, via 'pip lock', run through the bundled "
+            "interpreter) and exit. Writes 'pylock'/'build_pylock' to "
+            "pyproject.toml for whichever isn't already set."
+        ),
+    )
+    subparsers.add_parser(
+        "enable-reproducible",
+        parents=[common, lock_only],
+        help=(
+            "Pin the toolchain, generate both lock files, then run a real "
+            "build with reproducible enforced — and only once that build "
+            "succeeds, write reproducible = true to pyproject.toml."
         ),
     )
     return parser.parse_args()
@@ -300,22 +328,20 @@ def main() -> None:
 
     _apply_cli_overrides(config, args)
 
-    if args.check and (args.init or args.lock):
-        sys.exit("Error: --check cannot be combined with --init or --lock.")
-
     try:
-        if args.check:
+        if args.command == "check":
             ok = check(config, project_root)
             sys.exit(0 if ok else 1)
-        elif args.init or args.lock:
-            if args.init:
-                write_config(config, project_root)
-                # Re-read so --lock (below) pins hashes against the
-                # python_date --init just wrote, not a stale/latest one.
-                config = BuildConfig.from_pyproject(project_root)
-                _apply_cli_overrides(config, args)
-            if args.lock:
-                lock(config, project_root, uploaded_prior_to=args.uploaded_prior_to or "")
+        elif args.command == "init":
+            write_config(config, project_root)
+        elif args.command == "lock":
+            lock(config, project_root, uploaded_prior_to=args.uploaded_prior_to or "")
+        elif args.command == "enable-reproducible":
+            enable_reproducible(
+                config,
+                project_root,
+                uploaded_prior_to=args.uploaded_prior_to or "",
+            )
         else:
             build(config, project_root)
     except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:

@@ -39,13 +39,13 @@ A `pyproject.toml` is all that's needed to build. If your project already has on
 
 ```sh
 # Check what will be detected before building
-python -m appimage.build --check
+python -m appimage.ctl check
 
 # Writes the AppImage to dist/myapp-x86_64.AppImage
-python -m appimage.build
+python -m appimage.ctl
 
 # Optionally: persist detected values to pyproject.toml to pin or adjust them
-python -m appimage.build --init
+python -m appimage.ctl init
 ```
 
 
@@ -56,12 +56,12 @@ Two independent builds of the same project produce a byte-for-byte identical `.A
 To also guarantee this across machines and over time, with every dependency hash-verified:
 
 ```sh
-python -m appimage.build --init --lock       # pin the toolchain, hash-pin every dependency
-# then, once a build has succeeded:
-# reproducible = true   in [tool.appimage.build]
+python -m appimage.ctl enable-reproducible   # pin the toolchain, hash-pin every
+                                              # dependency, verify with a real build,
+                                              # then turn reproducible = true on
 ```
 
-See [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for what's automatic, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `--lock`.
+See [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for what's automatic, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `lock`.
 
 
 ## Bundled interpreter access
@@ -92,4 +92,4 @@ When launched through a venv symlink, the bundled `appimage` module activates th
 
 ## Configuration
 
-All options go in `[tool.appimage.build]` inside `pyproject.toml`, and every key is optional. Lifecycle hooks, extra files, custom AppRun scripts, and environment variable injection are supported. See the [full documentation](https://appimage.readthedocs.io) for details.
+All options go in `[tool.appimage]` inside `pyproject.toml`, and every key is optional. Lifecycle hooks, extra files, custom AppRun scripts, and environment variable injection are supported. See the [full documentation](https://appimage.readthedocs.io) for details.
