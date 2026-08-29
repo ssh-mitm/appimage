@@ -25,6 +25,7 @@ distinct, mutually exclusive action.
 | `init` | Write auto-detected values to `[tool.appimage]` in `pyproject.toml` (only missing keys) and exit. Resolves the latest python-build-standalone release to write `python_date`/`python_sha256` (a lightweight API call, no download), and resolves appimagetool and the runtime file (possibly downloading them, ~8 MB + ~1 MB) to write `appimagetool_version`/`appimagetool_sha256`/`runtime_sha256`, whichever of these aren't already set. |
 | `lock` | Generate hash-pinned lock files and exit — a thin wrapper around `pip lock`, run through the bundled interpreter (see [Verified dependencies](reproducible-builds.md#verified-dependencies)). Generates `pylock.toml` for third-party dependencies *and* a build-backend lock file for the packaged project's own `[build-system].requires` in the same run, writing `pylock`/`build_pylock` to `pyproject.toml` for whichever isn't already set. |
 | `enable-reproducible` | One-command onboarding: runs `init` then `lock`, then a real build with `reproducible` enforced — and only once that build succeeds, writes `reproducible = true` to `pyproject.toml`. See [Getting to full reproducibility](reproducible-builds.md#getting-to-full-reproducibility). |
+| `build-appdir` | Assemble the AppDir — install Python and packages, copy assets/extra files, run hooks, compile bytecode, scrub build-machine paths — without resolving appimagetool/the runtime stub or packaging into an `.AppImage`. The result is a complete, runnable installation tree usable for testing or deploying some other way. Only enforces the AppDir-side reproducibility pin (`python_date`/`python_dir`), not `appimagetool_sha256`/`runtime_sha256` — those are irrelevant here since packaging never runs. |
 
 ## Options
 
@@ -108,4 +109,8 @@ python -m appimage.ctl --require-pylock --require-build-pylock
 
 # Regenerate both locks with a 7-day cooldown, excluding just-published releases
 python -m appimage.ctl lock --uploaded-prior-to P7D
+
+# Just assemble the AppDir — for testing, or deploying without packaging
+# into a single-file .AppImage. Never touches appimagetool/the runtime stub.
+python -m appimage.ctl build-appdir
 ```

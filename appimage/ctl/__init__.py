@@ -167,6 +167,27 @@ class BuildConfig:
         downloads are also verified against the digest GitHub publishes per
         release asset even when this is empty; set explicitly to also verify
         a local ``python_archive`` or a cached tarball.
+    python_dir : str
+        Path to an already-extracted Python distribution directory, copied
+        into ``AppDir/python`` directly instead of extracting a tarball.
+        Config-only — deliberately has no CLI override, since setting it is
+        meant to be a considered, committed-to-``pyproject.toml`` decision,
+        not a one-off flag. There is no single archive file left to hash by
+        the time a directory exists, so this is used exactly as given, with
+        no verification and no interaction with ``python_archive``/
+        ``python_date``/``python_sha256`` (set at most one of ``python_dir``
+        or ``python_archive``). Not a gap in the tool's own verification —
+        it exists for a directory whose *provenance* was already verified
+        elsewhere (e.g. via ``uv python install`, or via ``python_archive``
+        + ``python_sha256`` on a prior run) and is now trusted as a fixed,
+        reproducible-by-construction input in its own right: the same path
+        yields the same bytes every time, same as pointing ``appimagetool``/
+        ``runtime_file`` at a local path already does elsewhere in this
+        tool. ``reproducible`` accepts ``python_dir`` in place of
+        ``python_date`` for exactly this reason — but ``check``'s
+        reproducibility checklist marks it as a *trusted, unverified*
+        pin rather than showing it identically to a hash-checked one, since
+        that trust is asserted by you, not established by this tool.
     runtime_file : str
         Path to a local AppImage runtime ELF stub, passed to appimagetool as
         ``--runtime-file``. When empty, it is looked up in the build cache
@@ -256,6 +277,7 @@ class BuildConfig:
     appimagetool_sha256: str = ""
     python_archive: str = ""
     python_sha256: str = ""
+    python_dir: str = ""
     runtime_file: str = ""
     runtime_sha256: str = ""
     verify_downloads: bool = False
@@ -317,6 +339,7 @@ class BuildConfig:
             appimagetool_sha256=cfg.get("appimagetool_sha256", ""),
             python_archive=cfg.get("python_archive", ""),
             python_sha256=cfg.get("python_sha256", ""),
+            python_dir=cfg.get("python_dir", ""),
             runtime_file=cfg.get("runtime_file", ""),
             runtime_sha256=cfg.get("runtime_sha256", ""),
             verify_downloads=cfg.get("verify_downloads", False),
@@ -355,6 +378,7 @@ class _ResolvedBuild:
     appimagetool_sha256: str
     python_archive: str
     python_sha256: str
+    python_dir: str
     runtime_file: str
     runtime_sha256: str
     verify_downloads: bool
@@ -365,8 +389,14 @@ class _ResolvedBuild:
     require_build_pylock: bool
     reproducible: bool
     sources: dict[str, str]
-    warnings: list[str]
-    errors: list[str]
+    # Split by which step each belongs to — AppDir assembly vs. packaging
+    # into the final .AppImage — so build_appdir() can enforce only what it
+    # actually needs, instead of demanding appimagetool/runtime pins it
+    # never touches. build() enforces both; check() shows both.
+    appdir_warnings: list[str]
+    appdir_errors: list[str]
+    package_warnings: list[str]
+    package_errors: list[str]
 
 
 def _detect_entry_point(scripts: dict[str, str], app: str) -> str | None:
@@ -656,8 +686,10 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     project: dict[str, object] = data.get("project", {})
 
     sources: dict[str, str] = {}
-    warnings: list[str] = []
-    errors: list[str] = []
+    appdir_warnings: list[str] = []
+    appdir_errors: list[str] = []
+    package_warnings: list[str] = []
+    package_errors: list[str] = []
 
     app, sources["app"] = _resolve_app(config, project)
     entry_point, sources["entry_point"], ep_errors = _resolve_entry_point(
@@ -665,16 +697,16 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         project,
         app,
     )
-    errors.extend(ep_errors)
+    appdir_errors.extend(ep_errors)
     python, sources["python"] = _resolve_python(config, project)
     icon, sources["icon"], icon_warnings = _resolve_icon_path(config, project_root, app)
-    warnings.extend(icon_warnings)
+    appdir_warnings.extend(icon_warnings)
     desktop, sources["desktop"], desktop_warnings = _resolve_desktop_path(
         config,
         project_root,
         app,
     )
-    warnings.extend(desktop_warnings)
+    appdir_warnings.extend(desktop_warnings)
 
     if config.extras:
         extras_str = ",".join(config.extras)
@@ -697,13 +729,24 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     )
     sources["dist_dir"] = "[tool.appimage]" if config.dist_dir != "dist" else "default"
 
+    if config.python_archive and config.python_dir:
+        appdir_errors.append(
+            "Set at most one of python_archive or python_dir in "
+            "[tool.appimage] — which one would apply is ambiguous.",
+        )
+
     verify_downloads = config.verify_downloads or config.reproducible
     require_zsyncmake = config.require_zsyncmake or config.reproducible
     if config.reproducible:
-        errors.extend(
+        if not config.python_dir and not config.python_date:
+            appdir_errors.append(
+                "reproducible requires python_date (or python_dir) to be set "
+                "in [tool.appimage] — run 'init' to resolve and write it.",
+            )
+        package_errors.extend(
             f"reproducible requires {key} to be set in "
             "[tool.appimage] — run 'init' to resolve and write it."
-            for key in ("python_date", "appimagetool_sha256", "runtime_sha256")
+            for key in ("appimagetool_sha256", "runtime_sha256")
             if not getattr(config, key)
         )
 
@@ -713,7 +756,9 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
             "delta-update file will be generated. Install the 'zsync' package "
             "(provides zsyncmake), or unset update_info."
         )
-        (errors if require_zsyncmake else warnings).append(zsyncmake_msg)
+        (package_errors if require_zsyncmake else package_warnings).append(
+            zsyncmake_msg,
+        )
 
     if not config.pylock:
         pylock_msg = (
@@ -721,7 +766,7 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
             "without hash verification. Run 'lock' to generate pylock.toml, "
             'then set pylock = "pylock.toml" in [tool.appimage].'
         )
-        (errors if config.require_pylock else warnings).append(pylock_msg)
+        (appdir_errors if config.require_pylock else appdir_warnings).append(pylock_msg)
 
     if not config.build_pylock:
         build_pylock_msg = (
@@ -730,7 +775,9 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
             "installed without hash verification into the isolated build "
             "environment. Run 'lock' to generate it alongside pylock.toml."
         )
-        (errors if config.require_build_pylock else warnings).append(build_pylock_msg)
+        (appdir_errors if config.require_build_pylock else appdir_warnings).append(
+            build_pylock_msg,
+        )
 
     return _ResolvedBuild(
         app=app,
@@ -747,7 +794,9 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         dist_dir=config.dist_dir,
         update_info=config.update_info,
         update_info_suggested=(
-            "" if config.update_info else _suggest_update_info(app, project, warnings)
+            ""
+            if config.update_info
+            else _suggest_update_info(app, project, package_warnings)
         ),
         env=config.env,
         extra_files=config.extra_files,
@@ -757,6 +806,7 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         appimagetool_sha256=config.appimagetool_sha256,
         python_archive=config.python_archive,
         python_sha256=config.python_sha256,
+        python_dir=config.python_dir,
         runtime_file=config.runtime_file,
         runtime_sha256=config.runtime_sha256,
         verify_downloads=verify_downloads,
@@ -767,8 +817,10 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         require_build_pylock=config.require_build_pylock,
         reproducible=config.reproducible,
         sources=sources,
-        warnings=warnings,
-        errors=errors,
+        appdir_warnings=appdir_warnings,
+        appdir_errors=appdir_errors,
+        package_warnings=package_warnings,
+        package_errors=package_errors,
     )
 
 
@@ -790,6 +842,7 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         ("python_date", resolved.python_date),
         ("python_archive", resolved.python_archive),
         ("python_sha256", resolved.python_sha256),
+        ("python_dir", resolved.python_dir),
         ("appimagetool", resolved.appimagetool),
         ("appimagetool_version", resolved.appimagetool_version),
         ("appimagetool_sha256", resolved.appimagetool_sha256),
@@ -812,31 +865,54 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
     return rows
 
 
-_REPRODUCIBILITY_PINS: Final = ("python_date", "appimagetool_sha256", "runtime_sha256")
+_PACKAGE_REPRODUCIBILITY_PINS: Final = ("appimagetool_sha256", "runtime_sha256")
 
 
 def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
-    """Return a checklist of the three independent pinning stories.
+    """Return a checklist of the independent pinning stories.
 
     Unlike the individual warnings above, this always reflects the current
     state — not just when ``reproducible``/``require_pylock``/
     ``require_build_pylock`` are set and something is missing. Without
-    it, a plain ``check`` gives no signal
-    at all about the three reproducibility pins: they only ever surface as
-    a warning deep inside a real ``build()`` run (when appimagetool/
-    runtime/python are actually resolved) or as a hard error once
-    ``reproducible`` is already turned on — nothing in between.
+    it, a plain ``check`` gives no signal at all about the reproducibility
+    pins: they only ever surface as a warning deep inside a real ``build()``
+    run (when appimagetool/runtime/python are actually resolved) or as a
+    hard error once ``reproducible`` is already turned on — nothing in
+    between.
+
+    AppDir and packaging reproducibility are reported as two separate
+    lines, matching ``build_appdir()``/``build()``'s own split of which
+    pins each actually needs (see ``_scrub_build_paths``/``build_appdir``).
     """
-    pinned = [key for key in _REPRODUCIBILITY_PINS if getattr(resolved, key)]
-    toolchain_ready = len(pinned) == len(_REPRODUCIBILITY_PINS)
-    if toolchain_ready:
-        repro_line = (
-            f"Reproducibility: {len(pinned)}/{len(_REPRODUCIBILITY_PINS)} pins set"
+    appdir_ready = bool(resolved.python_date or resolved.python_dir)
+    if resolved.python_dir:
+        appdir_line = (
+            f"AppDir reproducibility: python_dir set ({resolved.python_dir}) "
+            "— trusted directory, not hash-verified"
+        )
+    elif appdir_ready:
+        appdir_line = "AppDir reproducibility: python_date set"
+    else:
+        appdir_line = (
+            "AppDir reproducibility: python_date not set — run 'init' to "
+            "resolve and pin it, or set python_dir"
+        )
+
+    package_pinned = [
+        key for key in _PACKAGE_REPRODUCIBILITY_PINS if getattr(resolved, key)
+    ]
+    package_ready = len(package_pinned) == len(_PACKAGE_REPRODUCIBILITY_PINS)
+    if package_ready:
+        package_line = (
+            "Packaging reproducibility: appimagetool_sha256, runtime_sha256 set"
         )
     else:
-        repro_line = (
-            f"Reproducibility: {len(pinned)}/{len(_REPRODUCIBILITY_PINS)} pins set "
-            f"({', '.join(_REPRODUCIBILITY_PINS)}) — run 'init' to resolve and pin them"
+        missing = ", ".join(
+            key for key in _PACKAGE_REPRODUCIBILITY_PINS if not getattr(resolved, key)
+        )
+        package_line = (
+            f"Packaging reproducibility: {missing} not set — run 'init' to "
+            "resolve and pin them"
         )
 
     pylock_ready = bool(resolved.pylock)
@@ -854,10 +930,10 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
         "to generate it alongside pylock.toml"
     )
 
-    ready = [toolchain_ready, pylock_ready, build_pylock_ready]
+    ready = [appdir_ready, package_ready, pylock_ready, build_pylock_ready]
     header = f"Reproducibility checklist ({sum(ready)}/{len(ready)} ready):"
     marks = ["✓" if r else "✗" for r in ready]
-    lines = [repro_line, pylock_line, build_pylock_line]
+    lines = [appdir_line, package_line, pylock_line, build_pylock_line]
     return [
         header,
         *(f"  {mark} {line}" for mark, line in zip(marks, lines, strict=True)),
@@ -906,14 +982,16 @@ def _format_check(resolved: _ResolvedBuild) -> None:
     for line in _reproducibility_summary(resolved):
         _log.info("  %s", line)
 
-    if resolved.warnings:
+    warnings = resolved.appdir_warnings + resolved.package_warnings
+    if warnings:
         _log.info("")
-        for w in resolved.warnings:
+        for w in warnings:
             _log.warning("  Warning: %s", w)
 
-    if resolved.errors:
+    errors = resolved.appdir_errors + resolved.package_errors
+    if errors:
         _log.info("")
-        for e in resolved.errors:
+        for e in errors:
             _log.error("  Error:   %s", e)
 
 
@@ -957,7 +1035,7 @@ def check(config: BuildConfig, project_root: Path) -> bool:
     """
     resolved = _resolve(config, project_root)
     _format_check(resolved)
-    return not resolved.errors
+    return not (resolved.appdir_errors or resolved.package_errors)
 
 
 def _appimagetool_version_string(tool: Path) -> str:
@@ -982,8 +1060,8 @@ def _auto_detected_fields(
         new["app"] = resolved.app
     # An empty source means _resolve_entry_point couldn't determine one and
     # fell back to *app* as a placeholder alongside an error in
-    # resolved.errors — writing that guess here would silently turn a loud
-    # check error into a wrong-but-configured value.
+    # resolved.appdir_errors — writing that guess here would silently turn
+    # a loud check error into a wrong-but-configured value.
     if "entry_point" not in existing and resolved.sources.get("entry_point"):
         new["entry_point"] = resolved.entry_point
     if "python" not in existing:
@@ -1396,6 +1474,35 @@ def _require_or_warn_unverified(
     )
 
 
+def _install_python(
+    resolved: _ResolvedBuild,
+    appdir: Path,
+    python_cache: Path,
+    arch: str,
+) -> None:
+    """Populate ``appdir/python`` from ``python_dir`` or a resolved tarball.
+
+    ``python_dir`` bypasses tarball resolution, caching, and download
+    entirely — it's copied in as given, unverified by design (see
+    ``BuildConfig.python_dir``). Otherwise, behaves exactly as a plain
+    build always has: resolve a python-build-standalone tarball (local
+    ``python_archive``, build cache, or download) and extract it.
+    """
+    if resolved.python_dir:
+        source = Path(resolved.python_dir)
+        if not source.is_dir():
+            msg = f"python_dir not found or not a directory: {source}"
+            raise FileNotFoundError(msg)
+        _log.info("Using Python directory (trusted, unverified): %s", source)
+        shutil.copytree(source, appdir / "python")
+        return
+
+    python_tarball = _resolve_python_tarball(resolved, python_cache, arch)
+    _log.info("Extracting Python...")
+    with tarfile.open(python_tarball) as tar:
+        tar.extractall(appdir)  # noqa: S202  # nosec B202
+
+
 def _resolve_python_tarball(
     resolved: _ResolvedBuild,
     python_cache: Path,
@@ -1706,7 +1813,7 @@ def lock(
     """
     resolved = _resolve(config, project_root)
     _format_check(resolved)
-    if resolved.errors:
+    if resolved.appdir_errors:
         raise SystemExit(1)
 
     arch = platform.machine()
@@ -1718,10 +1825,7 @@ def lock(
         shutil.rmtree(appdir)
     appdir.mkdir(parents=True)
 
-    python_tarball = _resolve_python_tarball(resolved, python_cache, arch)
-    _log.info("Extracting Python...")
-    with tarfile.open(python_tarball) as tar:
-        tar.extractall(appdir)  # noqa: S202  # nosec B202
+    _install_python(resolved, appdir, python_cache, arch)
     python_bin = appdir / "python" / "bin" / "python3"
 
     pylock_path = _generate_lock(
@@ -2168,14 +2272,13 @@ def _install_targets(
 
 def _prepare_python(
     resolved: _ResolvedBuild,
-    python_tarball: Path,
     appdir: Path,
+    python_cache: Path,
+    arch: str,
     project_root: Path,
 ) -> None:
-    """Extract Python and install packages into AppDir."""
-    _log.info("Extracting Python...")
-    with tarfile.open(python_tarball) as tar:
-        tar.extractall(appdir)  # noqa: S202  # nosec B202
+    """Install Python and packages into AppDir."""
+    _install_python(resolved, appdir, python_cache, arch)
 
     python_bin = appdir / "python" / "bin" / "python3"
 
@@ -2411,6 +2514,94 @@ def _copy_extra_files(
             shutil.copy2(src_path, dst_path)
 
 
+def _assemble_appdir(
+    resolved: _ResolvedBuild,
+    appdir: Path,
+    python_cache: Path,
+    arch: str,
+    project_root: Path,
+    epoch: int,
+) -> None:
+    """Do the actual AppDir assembly work, given an already-resolved config.
+
+    Shared by ``build_appdir()`` and ``build()`` so there's exactly one
+    place that does this, regardless of which validation (``appdir_errors``
+    only, or both buckets) already ran in the caller.
+    """
+    _log.info("")
+    _log.info("Preparing AppDir...")
+    if appdir.exists():
+        shutil.rmtree(appdir)
+    appdir.mkdir(parents=True)
+
+    _prepare_python(resolved, appdir, python_cache, arch, project_root)
+    _copy_assets(resolved, project_root, appdir)
+    _copy_extra_files(resolved, project_root, appdir)
+
+    if hook := resolved.hooks.get("pre_package"):
+        _log.info("Running pre_package hook...")
+        _run_hook(hook, project_root, appdir)
+
+    _compile_pyc(resolved, appdir)
+    _scrub_build_paths(resolved, appdir)
+    # https://reproducible-builds.org/specs/source-date-epoch/ — respected
+    # both here and, for a full build, again in appimagetool's own process
+    # environment (it touches a few paths of its own, e.g. .DirIcon, which
+    # this AppDir-side normalization can't reach).
+    _normalize_mtimes(appdir, epoch)
+
+
+def build_appdir(config: BuildConfig, project_root: Path) -> Path:
+    """Assemble the AppDir from *config*, without packaging it into an AppImage.
+
+    Everything a full build does through mtime normalization — installing
+    Python and packages, copying assets/extra files, running hooks,
+    compiling bytecode, and scrubbing build-machine paths — with none of
+    the appimagetool/runtime resolution or packaging that follows. The
+    result is a complete, runnable installation tree that can be tested,
+    inspected, or deployed some other way without ever producing a
+    single-file ``.AppImage``.
+
+    Only enforces ``appdir_errors``: errors that block packaging
+    specifically (e.g. missing ``appimagetool_sha256``/``runtime_sha256``
+    under ``reproducible``, or missing ``zsyncmake``) don't apply here,
+    since this never resolves appimagetool or the runtime stub at all.
+
+    Parameters
+    ----------
+    config : BuildConfig
+        Build configuration (explicit fields only; the rest are auto-detected).
+    project_root : Path
+        Absolute path to the project root directory.
+
+    Returns
+    -------
+    Path
+        Path to the assembled AppDir.
+
+    Raises
+    ------
+    SystemExit
+        If the resolved configuration has AppDir-blocking errors.
+
+    """
+    resolved = _resolve(config, project_root)
+    _format_check(resolved)
+
+    if resolved.appdir_errors:
+        raise SystemExit(1)
+
+    arch = platform.machine()
+    build_dir = project_root / resolved.build_dir
+    appdir = build_dir / "AppDir"
+    python_cache = build_dir / "python.tar.gz"
+    epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
+
+    _assemble_appdir(resolved, appdir, python_cache, arch, project_root, epoch)
+    _log.info("Done: %s", appdir)
+    return appdir
+
+
 def build(config: BuildConfig, project_root: Path) -> None:
     """Build an AppImage from *config* rooted at *project_root*.
 
@@ -2430,7 +2621,7 @@ def build(config: BuildConfig, project_root: Path) -> None:
     resolved = _resolve(config, project_root)
     _format_check(resolved)
 
-    if resolved.errors:
+    if resolved.appdir_errors or resolved.package_errors:
         raise SystemExit(1)
 
     arch = platform.machine()
@@ -2440,31 +2631,9 @@ def build(config: BuildConfig, project_root: Path) -> None:
     python_cache = build_dir / "python.tar.gz"
     appimagetool_cache = build_dir / f"appimagetool-{arch}.AppImage"
     runtime_cache = build_dir / f"runtime-{arch}"
-
-    # https://reproducible-builds.org/specs/source-date-epoch/ — respected
-    # both for our own AppDir mtime normalization and, further down, for
-    # appimagetool's own process environment (it touches a few paths of its
-    # own, e.g. .DirIcon, which our AppDir-side normalization can't reach).
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
 
-    _log.info("")
-    _log.info("Preparing AppDir...")
-    if appdir.exists():
-        shutil.rmtree(appdir)
-    appdir.mkdir(parents=True)
-
-    python_tarball = _resolve_python_tarball(resolved, python_cache, arch)
-    _prepare_python(resolved, python_tarball, appdir, project_root)
-    _copy_assets(resolved, project_root, appdir)
-    _copy_extra_files(resolved, project_root, appdir)
-
-    if hook := resolved.hooks.get("pre_package"):
-        _log.info("Running pre_package hook...")
-        _run_hook(hook, project_root, appdir)
-
-    _compile_pyc(resolved, appdir)
-    _scrub_build_paths(resolved, appdir)
-    _normalize_mtimes(appdir, epoch)
+    _assemble_appdir(resolved, appdir, python_cache, arch, project_root, epoch)
 
     appimagetool_bin = _resolve_appimagetool(resolved, appimagetool_cache, arch)
     runtime_bin = _resolve_runtime_file(resolved, runtime_cache, arch)

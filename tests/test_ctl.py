@@ -26,6 +26,7 @@ from appimage.ctl import (
     _verify_sha256,
     _write_reproducible_flag,
     build,
+    build_appdir,
     enable_reproducible,
     write_config,
 )
@@ -60,6 +61,7 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "appimagetool_sha256": "",
         "python_archive": "",
         "python_sha256": "",
+        "python_dir": "",
         "runtime_file": "",
         "runtime_sha256": "",
         "verify_downloads": False,
@@ -70,8 +72,10 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "require_build_pylock": False,
         "reproducible": False,
         "sources": {},
-        "warnings": [],
-        "errors": [],
+        "appdir_warnings": [],
+        "appdir_errors": [],
+        "package_warnings": [],
+        "package_errors": [],
     }
     defaults.update(overrides)
     return _ResolvedBuild(**defaults)  # type: ignore[arg-type]
@@ -414,8 +418,8 @@ def test_zsyncmake_noop_without_update_info(tmp_path: Path) -> None:
     with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
-    assert not _has_zsyncmake_message(resolved.warnings)
-    assert resolved.errors == []
+    assert not _has_zsyncmake_message(resolved.package_warnings)
+    assert resolved.package_errors == []
 
 
 def test_zsyncmake_noop_when_found(tmp_path: Path) -> None:
@@ -425,8 +429,8 @@ def test_zsyncmake_noop_when_found(tmp_path: Path) -> None:
     with patch("appimage.ctl.shutil.which", return_value="/usr/bin/zsyncmake"):
         resolved = _resolve(config, tmp_path)
 
-    assert not _has_zsyncmake_message(resolved.warnings)
-    assert resolved.errors == []
+    assert not _has_zsyncmake_message(resolved.package_warnings)
+    assert resolved.package_errors == []
 
 
 def test_zsyncmake_warns_by_default(tmp_path: Path) -> None:
@@ -436,8 +440,8 @@ def test_zsyncmake_warns_by_default(tmp_path: Path) -> None:
     with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
-    assert _has_zsyncmake_message(resolved.warnings)
+    assert resolved.package_errors == []
+    assert _has_zsyncmake_message(resolved.package_warnings)
 
 
 def test_zsyncmake_errors_with_require_zsyncmake(tmp_path: Path) -> None:
@@ -449,8 +453,8 @@ def test_zsyncmake_errors_with_require_zsyncmake(tmp_path: Path) -> None:
     with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
-    assert not _has_zsyncmake_message(resolved.warnings)
-    assert _has_zsyncmake_message(resolved.errors)
+    assert not _has_zsyncmake_message(resolved.package_warnings)
+    assert _has_zsyncmake_message(resolved.package_errors)
 
 
 def test_zsyncmake_warns_not_errors_with_verify_downloads_alone(tmp_path: Path) -> None:
@@ -463,8 +467,8 @@ def test_zsyncmake_warns_not_errors_with_verify_downloads_alone(tmp_path: Path) 
     with patch("appimage.ctl.shutil.which", return_value=None):
         resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
-    assert any("zsyncmake is not on PATH" in w for w in resolved.warnings)
+    assert resolved.package_errors == []
+    assert any("zsyncmake is not on PATH" in w for w in resolved.package_warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +493,7 @@ def test_update_info_suggested_from_source_url(tmp_path: Path) -> None:
     assert resolved.update_info_suggested == (
         "gh-releases-zsync|acme|myapp|latest|myapp-x86_64.AppImage.zsync"
     )
-    assert _has_update_info_suggestion_message(resolved.warnings)
+    assert _has_update_info_suggestion_message(resolved.package_warnings)
 
 
 def test_update_info_no_suggestion_without_project_urls(tmp_path: Path) -> None:
@@ -499,7 +503,7 @@ def test_update_info_no_suggestion_without_project_urls(tmp_path: Path) -> None:
     resolved = _resolve(config, tmp_path)
 
     assert resolved.update_info_suggested == ""
-    assert not _has_update_info_suggestion_message(resolved.warnings)
+    assert not _has_update_info_suggestion_message(resolved.package_warnings)
 
 
 def test_update_info_no_suggestion_for_non_repo_urls(tmp_path: Path) -> None:
@@ -514,7 +518,7 @@ def test_update_info_no_suggestion_for_non_repo_urls(tmp_path: Path) -> None:
     resolved = _resolve(config, tmp_path)
 
     assert resolved.update_info_suggested == ""
-    assert not _has_update_info_suggestion_message(resolved.warnings)
+    assert not _has_update_info_suggestion_message(resolved.package_warnings)
 
 
 def test_update_info_no_suggestion_when_ambiguous(tmp_path: Path) -> None:
@@ -529,7 +533,7 @@ def test_update_info_no_suggestion_when_ambiguous(tmp_path: Path) -> None:
     resolved = _resolve(config, tmp_path)
 
     assert resolved.update_info_suggested == ""
-    assert not _has_update_info_suggestion_message(resolved.warnings)
+    assert not _has_update_info_suggestion_message(resolved.package_warnings)
 
 
 def test_update_info_prefers_preferred_key_over_ambiguous_fallback(tmp_path: Path) -> None:
@@ -560,7 +564,7 @@ def test_update_info_explicit_value_skips_suggestion(tmp_path: Path) -> None:
 
     assert resolved.update_info == "zsync|https://example/app.AppImage.zsync"
     assert resolved.update_info_suggested == ""
-    assert not _has_update_info_suggestion_message(resolved.warnings)
+    assert not _has_update_info_suggestion_message(resolved.package_warnings)
 
 
 def test_write_config_writes_suggested_update_info(tmp_path: Path) -> None:
@@ -622,9 +626,9 @@ def test_reproducible_errors_when_pins_missing(tmp_path: Path) -> None:
 
     assert resolved.verify_downloads is True
     assert resolved.require_zsyncmake is True
-    assert any("python_date" in e for e in resolved.errors)
-    assert any("appimagetool_sha256" in e for e in resolved.errors)
-    assert any("runtime_sha256" in e for e in resolved.errors)
+    assert any("python_date" in e for e in resolved.appdir_errors)
+    assert any("appimagetool_sha256" in e for e in resolved.package_errors)
+    assert any("runtime_sha256" in e for e in resolved.package_errors)
 
 
 def test_reproducible_passes_when_pins_set(tmp_path: Path) -> None:
@@ -638,9 +642,35 @@ def test_reproducible_passes_when_pins_set(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
+    assert resolved.appdir_errors == []
+    assert resolved.package_errors == []
     assert resolved.verify_downloads is True
     assert resolved.require_zsyncmake is True
+
+
+def test_reproducible_python_dir_satisfies_appdir_pin(tmp_path: Path) -> None:
+    """python_dir stands in for python_date — no python-build-standalone pin needed."""
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(
+        reproducible=True,
+        python_dir="/opt/python",
+        appimagetool_sha256=digest_of(b"tool"),
+        runtime_sha256=digest_of(b"runtime"),
+    )
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.appdir_errors == []
+    assert resolved.package_errors == []
+
+
+def test_python_archive_and_python_dir_together_is_an_error(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(python_archive="/tmp/python.tar.gz", python_dir="/opt/python")
+
+    resolved = _resolve(config, tmp_path)
+
+    assert any("python_archive" in e and "python_dir" in e for e in resolved.appdir_errors)
 
 
 def test_reproducible_false_does_not_require_pins(tmp_path: Path) -> None:
@@ -649,7 +679,8 @@ def test_reproducible_false_does_not_require_pins(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
+    assert resolved.appdir_errors == []
+    assert resolved.package_errors == []
     assert resolved.verify_downloads is False
     assert resolved.require_zsyncmake is False
 
@@ -829,11 +860,12 @@ def test_prepare_python_installs_with_no_compile(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+    with patch("appimage.ctl._resolve_python_tarball", return_value=tarball), \
+         patch("appimage.ctl.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.subprocess.run") as mock_run, \
          patch("appimage.ctl._resolve_appimage_pin_sha256", return_value=None):
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
-        _prepare_python(resolved, tarball, appdir, tmp_path)
+        _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     args = mock_run.call_args.args[0]
     assert "--no-compile" in args
@@ -871,8 +903,7 @@ def test_build_compiles_pyc_after_pre_package_before_appimagetool(tmp_path: Path
     (tmp_path / "hook.sh").chmod(0o755)
 
     manager = MagicMock()
-    with patch.object(build_module, "_resolve_python_tarball", manager._resolve_python_tarball), \
-         patch.object(build_module, "_prepare_python", manager._prepare_python), \
+    with patch.object(build_module, "_prepare_python", manager._prepare_python), \
          patch.object(build_module, "_copy_assets", manager._copy_assets), \
          patch.object(build_module, "_copy_extra_files", manager._copy_extra_files), \
          patch.object(build_module, "_run_hook", manager._run_hook), \
@@ -904,8 +935,7 @@ def test_build_respects_source_date_epoch_env_var(tmp_path: Path) -> None:
     config = build_module.BuildConfig()
 
     manager = MagicMock()
-    with patch.object(build_module, "_resolve_python_tarball", manager._resolve_python_tarball), \
-         patch.object(build_module, "_prepare_python", manager._prepare_python), \
+    with patch.object(build_module, "_prepare_python", manager._prepare_python), \
          patch.object(build_module, "_copy_assets", manager._copy_assets), \
          patch.object(build_module, "_copy_extra_files", manager._copy_extra_files), \
          patch.object(build_module, "_compile_pyc", manager._compile_pyc), \
@@ -919,6 +949,96 @@ def test_build_respects_source_date_epoch_env_var(tmp_path: Path) -> None:
 
     packaging_call = next(c for c in manager.mock_calls if c[0] == "subprocess_run")
     assert packaging_call.kwargs["env"]["SOURCE_DATE_EPOCH"] == "1700000000"
+
+
+def test_build_appdir_never_touches_appimagetool_or_packages(tmp_path: Path) -> None:
+    from appimage import ctl as build_module
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+    )
+    config = build_module.BuildConfig()
+
+    manager = MagicMock()
+    with patch.object(build_module, "_prepare_python", manager._prepare_python), \
+         patch.object(build_module, "_copy_assets", manager._copy_assets), \
+         patch.object(build_module, "_copy_extra_files", manager._copy_extra_files), \
+         patch.object(build_module, "_compile_pyc", manager._compile_pyc), \
+         patch.object(build_module, "_resolve_appimagetool", manager._resolve_appimagetool), \
+         patch.object(build_module, "_resolve_runtime_file", manager._resolve_runtime_file), \
+         patch.object(build_module.subprocess, "run", manager.subprocess_run):
+        appdir = build_appdir(config, tmp_path)
+
+    assert appdir == tmp_path / "build" / "AppDir"
+    manager._resolve_appimagetool.assert_not_called()
+    manager._resolve_runtime_file.assert_not_called()
+    manager.subprocess_run.assert_not_called()
+
+
+def test_build_appdir_ignores_missing_package_pins_under_reproducible(tmp_path: Path) -> None:
+    """reproducible=True still lets build_appdir succeed without appimagetool/runtime pins."""
+    from appimage import ctl as build_module
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[tool.appimage]\nreproducible = true\npython_date = "20260211"\n'
+    )
+    config = build_module.BuildConfig.from_pyproject(tmp_path)
+
+    with patch.object(build_module, "_prepare_python"), \
+         patch.object(build_module, "_copy_assets"), \
+         patch.object(build_module, "_copy_extra_files"), \
+         patch.object(build_module, "_compile_pyc"):
+        appdir = build_appdir(config, tmp_path)
+
+    assert appdir == tmp_path / "build" / "AppDir"
+
+
+def test_build_still_requires_package_pins_under_reproducible(tmp_path: Path) -> None:
+    """Unlike build_appdir, a full build enforces the appimagetool/runtime pins too."""
+    from appimage import ctl as build_module
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[tool.appimage]\nreproducible = true\npython_date = "20260211"\n'
+    )
+    config = build_module.BuildConfig.from_pyproject(tmp_path)
+
+    with pytest.raises(SystemExit):
+        build(config, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# _install_python / python_dir
+# ---------------------------------------------------------------------------
+
+def test_install_python_copies_python_dir_unverified(tmp_path: Path) -> None:
+    from appimage.ctl import _install_python
+
+    source = tmp_path / "prebuilt-python"
+    (source / "bin").mkdir(parents=True)
+    (source / "bin" / "python3").write_text("fake interpreter")
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+
+    resolved = make_resolved(python_dir=str(source))
+
+    with patch("appimage.ctl._resolve_python_tarball") as mock_resolve_tarball:
+        _install_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64")
+
+    mock_resolve_tarball.assert_not_called()
+    assert (appdir / "python" / "bin" / "python3").read_text() == "fake interpreter"
+
+
+def test_install_python_raises_when_python_dir_missing(tmp_path: Path) -> None:
+    from appimage.ctl import _install_python
+
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+    resolved = make_resolved(python_dir=str(tmp_path / "does-not-exist"))
+
+    with pytest.raises(FileNotFoundError):
+        _install_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64")
 
 
 # ---------------------------------------------------------------------------
@@ -1045,8 +1165,8 @@ def test_pylock_warns_by_default(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
-    assert _has_pylock_message(resolved.warnings)
+    assert resolved.appdir_errors == []
+    assert _has_pylock_message(resolved.appdir_warnings)
 
 
 def test_pylock_errors_with_require_pylock(tmp_path: Path) -> None:
@@ -1055,8 +1175,8 @@ def test_pylock_errors_with_require_pylock(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert not _has_pylock_message(resolved.warnings)
-    assert _has_pylock_message(resolved.errors)
+    assert not _has_pylock_message(resolved.appdir_warnings)
+    assert _has_pylock_message(resolved.appdir_errors)
 
 
 def test_pylock_noop_when_configured(tmp_path: Path) -> None:
@@ -1065,8 +1185,8 @@ def test_pylock_noop_when_configured(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
-    assert not _has_pylock_message(resolved.warnings)
+    assert resolved.appdir_errors == []
+    assert not _has_pylock_message(resolved.appdir_warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -1083,8 +1203,8 @@ def test_build_pylock_warns_by_default(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
-    assert _has_build_pylock_message(resolved.warnings)
+    assert resolved.appdir_errors == []
+    assert _has_build_pylock_message(resolved.appdir_warnings)
 
 
 def test_build_pylock_errors_with_require_build_pylock(tmp_path: Path) -> None:
@@ -1093,8 +1213,8 @@ def test_build_pylock_errors_with_require_build_pylock(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert not _has_build_pylock_message(resolved.warnings)
-    assert _has_build_pylock_message(resolved.errors)
+    assert not _has_build_pylock_message(resolved.appdir_warnings)
+    assert _has_build_pylock_message(resolved.appdir_errors)
 
 
 def test_build_pylock_noop_when_configured(tmp_path: Path) -> None:
@@ -1103,22 +1223,23 @@ def test_build_pylock_noop_when_configured(tmp_path: Path) -> None:
 
     resolved = _resolve(config, tmp_path)
 
-    assert resolved.errors == []
-    assert not _has_build_pylock_message(resolved.warnings)
+    assert resolved.appdir_errors == []
+    assert not _has_build_pylock_message(resolved.appdir_warnings)
 
 
 # ---------------------------------------------------------------------------
 # _reproducibility_summary
 # ---------------------------------------------------------------------------
 
-def test_reproducibility_summary_reports_zero_of_three_by_default() -> None:
+def test_reproducibility_summary_reports_not_ready_by_default() -> None:
     from appimage.ctl import _reproducibility_summary
 
     resolved = make_resolved()
 
     lines = _reproducibility_summary(resolved)
 
-    assert any("Reproducibility: 0/3 pins set" in line for line in lines)
+    assert any("AppDir reproducibility: python_date not set" in line for line in lines)
+    assert any("Packaging reproducibility:" in line and "not set" in line for line in lines)
     assert any("'init'" in line for line in lines)
     assert any("Dependency verification: pylock not set" in line for line in lines)
     assert any("'lock'" in line for line in lines)
@@ -1138,7 +1259,11 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
 
     lines = _reproducibility_summary(resolved)
 
-    assert any("Reproducibility: 3/3 pins set" in line for line in lines)
+    assert any("AppDir reproducibility: python_date set" in line for line in lines)
+    assert any(
+        "Packaging reproducibility: appimagetool_sha256, runtime_sha256 set" in line
+        for line in lines
+    )
     assert not any("'init'" in line for line in lines)
     assert any("Dependency verification: pylock set (pylock.toml)" in line for line in lines)
     assert any(
@@ -1147,21 +1272,24 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
     )
 
 
-def test_reproducibility_summary_reports_partial_pins() -> None:
+def test_reproducibility_summary_python_dir_marked_trusted_unverified() -> None:
     from appimage.ctl import _reproducibility_summary
 
-    resolved = make_resolved(python_date="20260211")
+    resolved = make_resolved(python_dir="/opt/python")
 
     lines = _reproducibility_summary(resolved)
 
-    assert any("Reproducibility: 1/3 pins set" in line for line in lines)
+    assert any(
+        line.strip().startswith("✓") and "python_dir set" in line and "not hash-verified" in line
+        for line in lines
+    )
 
 
 def test_reproducibility_summary_header_counts_ready_layers() -> None:
     from appimage.ctl import _reproducibility_summary
 
     lines = _reproducibility_summary(make_resolved())
-    assert lines[0] == "Reproducibility checklist (0/3 ready):"
+    assert lines[0] == "Reproducibility checklist (0/4 ready):"
 
     lines = _reproducibility_summary(
         make_resolved(
@@ -1172,7 +1300,7 @@ def test_reproducibility_summary_header_counts_ready_layers() -> None:
             build_pylock="requirements-build.txt",
         )
     )
-    assert lines[0] == "Reproducibility checklist (3/3 ready):"
+    assert lines[0] == "Reproducibility checklist (4/4 ready):"
 
 
 def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
@@ -1187,7 +1315,12 @@ def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
         )
     )
 
-    assert any(line.strip().startswith("✓") and "Reproducibility:" in line for line in lines)
+    assert any(
+        line.strip().startswith("✓") and "AppDir reproducibility:" in line for line in lines
+    )
+    assert any(
+        line.strip().startswith("✓") and "Packaging reproducibility:" in line for line in lines
+    )
     assert any(line.strip().startswith("✓") and "Dependency verification:" in line for line in lines)
     assert any(line.strip().startswith("✗") and "Build backend verification:" in line for line in lines)
 
@@ -1210,10 +1343,11 @@ def test_prepare_python_uses_pylock_when_configured(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+    with patch("appimage.ctl._resolve_python_tarball", return_value=tarball), \
+         patch("appimage.ctl.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.subprocess.run") as mock_run:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
-        _prepare_python(resolved, tarball, appdir, tmp_path)
+        _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     calls = [c.args[0] for c in mock_run.call_args_list]
     assert len(calls) == 2
@@ -1235,10 +1369,11 @@ def test_prepare_python_raises_when_pylock_missing(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.ctl.tarfile.open") as mock_tarfile:
+    with patch("appimage.ctl._resolve_python_tarball", return_value=tarball), \
+         patch("appimage.ctl.tarfile.open") as mock_tarfile:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         with pytest.raises(FileNotFoundError):
-            _prepare_python(resolved, tarball, appdir, tmp_path)
+            _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1321,11 +1456,12 @@ def test_prepare_python_passes_build_pylock_without_pylock(tmp_path: Path) -> No
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+    with patch("appimage.ctl._resolve_python_tarball", return_value=tarball), \
+         patch("appimage.ctl.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.subprocess.run") as mock_run, \
          patch("appimage.ctl._resolve_appimage_pin_sha256", return_value=None):
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
-        _prepare_python(resolved, tarball, appdir, tmp_path)
+        _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     (project_call,) = [c.args[0] for c in mock_run.call_args_list]
     assert "--build-constraint" in project_call
@@ -1349,10 +1485,11 @@ def test_prepare_python_passes_build_pylock_with_pylock(tmp_path: Path) -> None:
     tarball = tmp_path / "python.tar.gz"
     tarball.write_bytes(b"")
 
-    with patch("appimage.ctl.tarfile.open") as mock_tarfile, \
+    with patch("appimage.ctl._resolve_python_tarball", return_value=tarball), \
+         patch("appimage.ctl.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.subprocess.run") as mock_run:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
-        _prepare_python(resolved, tarball, appdir, tmp_path)
+        _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     local_call, lock_call = [c.args[0] for c in mock_run.call_args_list]
     assert "--build-constraint" in local_call

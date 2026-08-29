@@ -204,6 +204,55 @@ the pins) as a shortcut that enforces all of the above at once: it implies
 since resolving any of those three fresh on every build is exactly what
 defeats cross-machine reproducibility in the first place.
 
+### AppDir-only builds need fewer pins
+
+`build-appdir` assembles the AppDir — installing Python and packages,
+copying assets, compiling bytecode, scrubbing build-machine paths — and
+stops there, without ever resolving appimagetool or the runtime stub:
+
+```sh
+python -m appimage.ctl build-appdir
+```
+
+Useful on its own: the result is a complete, runnable installation tree
+that can be tested, inspected, or deployed some other way, without ever
+producing a single-file `.AppImage`. Because of that, `reproducible`
+only requires `python_date` (or `python_dir`, below) for this command —
+`appimagetool_sha256`/`runtime_sha256` are irrelevant to something that
+never touches appimagetool. `check` reports the two halves as separate
+checklist lines, "AppDir reproducibility" and "Packaging reproducibility",
+for exactly this reason. A full build (no command, or `enable-reproducible`)
+still requires all three, since it does go on to package.
+
+### Bundling an already-extracted Python
+
+```toml
+[tool.appimage]
+python_dir = "/opt/verified-python"
+```
+
+An alternative to `python_archive` for a Python distribution that's
+already unpacked on disk — copied into `AppDir/python` as-is, instead of
+extracting a tarball. Config-only, deliberately with no CLI flag: setting
+it is meant to be a considered, committed-to-`pyproject.toml` decision.
+
+There's no single archive file left to hash by the time a directory
+exists, so this is used exactly as given, with no verification — but
+that's not a gap in this tool's own checking, it's for a directory whose
+*provenance* was already established elsewhere (`uv python install`, or a
+`python_archive` + `python_sha256` run on a prior build) and is now
+trusted as a fixed, reproducible-by-construction input: the same path
+yields the same bytes every time, the same way pointing `appimagetool`/
+`runtime_file` at a local path already works without a hash pin elsewhere
+in this tool. `reproducible` accepts `python_dir` in place of
+`python_date` for exactly this reason — but `check`'s checklist marks it
+as *trusted, unverified* rather than showing it identically to a
+hash-checked pin, since that trust is asserted by you, not established by
+`appimage.ctl` itself.
+
+Set at most one of `python_dir`/`python_archive` — having both is
+ambiguous and rejected as a config error.
+
 ## Verified dependencies
 
 Everything above pins *appimage.ctl's own* build tooling — appimagetool,

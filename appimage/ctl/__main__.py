@@ -10,6 +10,7 @@ from typing import Final
 from appimage.ctl import (
     BuildConfig,
     build,
+    build_appdir,
     check,
     enable_reproducible,
     lock,
@@ -276,6 +277,17 @@ def _parse_args() -> argparse.Namespace:
             "succeeds, write reproducible = true to pyproject.toml."
         ),
     )
+    subparsers.add_parser(
+        "build-appdir",
+        parents=[common],
+        help=(
+            "Assemble the AppDir (Python, packages, assets, hooks, bytecode, "
+            "build-path scrubbing) without packaging it into an .AppImage — "
+            "the result can be tested, inspected, or deployed some other way. "
+            "Only requires the AppDir-side reproducibility pins, not "
+            "appimagetool_sha256/runtime_sha256."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -342,6 +354,8 @@ def main() -> None:
                 project_root,
                 uploaded_prior_to=args.uploaded_prior_to or "",
             )
+        elif args.command == "build-appdir":
+            build_appdir(config, project_root)
         else:
             build(config, project_root)
     except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:

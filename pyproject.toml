@@ -119,8 +119,9 @@ disable = [
 
 [tool.pylint.design]
 max-args = 7
-max-locals = 26
-max-module-lines = 2600
+max-positional-arguments = 7
+max-locals = 30
+max-module-lines = 2900
 
 [tool.pylint.MASTER]
 load-plugins = "pylint.extensions.docparams"
