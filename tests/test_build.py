@@ -62,8 +62,8 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "require_zsyncmake": False,
         "pylock": "",
         "require_pylock": False,
-        "build_constraint": "",
-        "require_build_constraint": False,
+        "build_pylock": "",
+        "require_build_pylock": False,
         "reproducible": False,
         "sources": {},
         "warnings": [],
@@ -921,41 +921,41 @@ def test_pylock_noop_when_configured(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_constraint (build-backend hash-pinning)
+# build_pylock (build-backend hash-pinning)
 # ---------------------------------------------------------------------------
 
-def _has_build_constraint_message(messages: list[str]) -> bool:
-    return any("No build_constraint configured" in m for m in messages)
+def _has_build_pylock_message(messages: list[str]) -> bool:
+    return any("No build_pylock configured" in m for m in messages)
 
 
-def test_build_constraint_warns_by_default(tmp_path: Path) -> None:
+def test_build_pylock_warns_by_default(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
     config = BuildConfig()
 
     resolved = _resolve(config, tmp_path)
 
     assert resolved.errors == []
-    assert _has_build_constraint_message(resolved.warnings)
+    assert _has_build_pylock_message(resolved.warnings)
 
 
-def test_build_constraint_errors_with_require_build_constraint(tmp_path: Path) -> None:
+def test_build_pylock_errors_with_require_build_pylock(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
-    config = BuildConfig(require_build_constraint=True)
+    config = BuildConfig(require_build_pylock=True)
 
     resolved = _resolve(config, tmp_path)
 
-    assert not _has_build_constraint_message(resolved.warnings)
-    assert _has_build_constraint_message(resolved.errors)
+    assert not _has_build_pylock_message(resolved.warnings)
+    assert _has_build_pylock_message(resolved.errors)
 
 
-def test_build_constraint_noop_when_configured(tmp_path: Path) -> None:
+def test_build_pylock_noop_when_configured(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
-    config = BuildConfig(build_constraint="requirements-build.txt")
+    config = BuildConfig(build_pylock="requirements-build.txt")
 
     resolved = _resolve(config, tmp_path)
 
     assert resolved.errors == []
-    assert not _has_build_constraint_message(resolved.warnings)
+    assert not _has_build_pylock_message(resolved.warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -973,7 +973,7 @@ def test_reproducibility_summary_reports_zero_of_three_by_default() -> None:
     assert any("--init" in line for line in lines)
     assert any("Dependency verification: pylock not set" in line for line in lines)
     assert any("--lock" in line for line in lines)
-    assert any("Build backend verification: build_constraint not set" in line for line in lines)
+    assert any("Build backend verification: build_pylock not set" in line for line in lines)
 
 
 def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
@@ -984,7 +984,7 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
         appimagetool_sha256="a" * 64,
         runtime_sha256="b" * 64,
         pylock="pylock.toml",
-        build_constraint="requirements-build.txt",
+        build_pylock="requirements-build.txt",
     )
 
     lines = _reproducibility_summary(resolved)
@@ -993,7 +993,7 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
     assert not any("--init" in line for line in lines)
     assert any("Dependency verification: pylock set (pylock.toml)" in line for line in lines)
     assert any(
-        "Build backend verification: build_constraint set (requirements-build.txt)" in line
+        "Build backend verification: build_pylock set (requirements-build.txt)" in line
         for line in lines
     )
 
@@ -1020,7 +1020,7 @@ def test_reproducibility_summary_header_counts_ready_layers() -> None:
             appimagetool_sha256="a" * 64,
             runtime_sha256="b" * 64,
             pylock="pylock.toml",
-            build_constraint="requirements-build.txt",
+            build_pylock="requirements-build.txt",
         )
     )
     assert lines[0] == "Reproducibility checklist (3/3 ready):"
@@ -1093,44 +1093,54 @@ def test_prepare_python_raises_when_pylock_missing(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _build_constraint_args / build_constraint wired into pip installs
+# _install_build_pylock / build_pylock wired into pip installs
 # ---------------------------------------------------------------------------
 
-def test_build_constraint_args_empty_when_unset(tmp_path: Path) -> None:
-    from appimage.build import _build_constraint_args
+def test_install_build_pylock_noop_when_unset(tmp_path: Path) -> None:
+    from appimage.build import _install_build_pylock
 
     resolved = make_resolved()
 
-    assert _build_constraint_args(resolved, tmp_path) == []
+    with patch("appimage.build.subprocess.run") as mock_run:
+        args = _install_build_pylock(resolved, tmp_path / "python3", tmp_path)
+
+    assert args == []
+    mock_run.assert_not_called()
 
 
-def test_build_constraint_args_raises_when_file_missing(tmp_path: Path) -> None:
-    from appimage.build import _build_constraint_args
+def test_install_build_pylock_raises_when_file_missing(tmp_path: Path) -> None:
+    from appimage.build import _install_build_pylock
 
-    resolved = make_resolved(build_constraint="requirements-build.txt")
+    resolved = make_resolved(build_pylock="pylock.build.toml")
 
     with pytest.raises(FileNotFoundError):
-        _build_constraint_args(resolved, tmp_path)
+        _install_build_pylock(resolved, tmp_path / "python3", tmp_path)
 
 
-def test_build_constraint_args_when_configured(tmp_path: Path) -> None:
-    from appimage.build import _build_constraint_args
+def test_install_build_pylock_when_configured(tmp_path: Path) -> None:
+    from appimage.build import _install_build_pylock
 
-    (tmp_path / "requirements-build.txt").write_text("")
-    resolved = make_resolved(build_constraint="requirements-build.txt")
+    (tmp_path / "pylock.build.toml").write_text("")
+    resolved = make_resolved(build_pylock="pylock.build.toml")
+    python_bin = tmp_path / "python3"
 
-    args = _build_constraint_args(resolved, tmp_path)
+    with patch("appimage.build.subprocess.run") as mock_run:
+        args = _install_build_pylock(resolved, python_bin, tmp_path)
 
-    assert args == ["--build-constraint", str(tmp_path / "requirements-build.txt")]
+    assert args == ["--no-build-isolation"]
+    (call,) = [c.args[0] for c in mock_run.call_args_list]
+    assert call[0] == str(python_bin)
+    assert "--require-hashes" in call
+    assert str(tmp_path / "pylock.build.toml") in call
 
 
-def test_prepare_python_passes_build_constraint_without_pylock(tmp_path: Path) -> None:
+def test_prepare_python_passes_build_pylock_without_pylock(tmp_path: Path) -> None:
     from appimage.build import _prepare_python
 
-    (tmp_path / "requirements-build.txt").write_text("")
+    (tmp_path / "pylock.build.toml").write_text("")
     resolved = make_resolved(
         install_targets=["appimage==2.0.1", "."],
-        build_constraint="requirements-build.txt",
+        build_pylock="pylock.build.toml",
     )
     appdir = tmp_path / "AppDir"
     appdir.mkdir()
@@ -1142,21 +1152,23 @@ def test_prepare_python_passes_build_constraint_without_pylock(tmp_path: Path) -
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         _prepare_python(resolved, tarball, appdir, tmp_path)
 
-    (call,) = [c.args[0] for c in mock_run.call_args_list]
-    assert "--build-constraint" in call
-    assert str(tmp_path / "requirements-build.txt") in call
+    backend_call, project_call = [c.args[0] for c in mock_run.call_args_list]
+    assert "--require-hashes" in backend_call
+    assert str(tmp_path / "pylock.build.toml") in backend_call
+    assert "--no-build-isolation" in project_call
+    assert "appimage==2.0.1" in project_call
 
 
-def test_prepare_python_passes_build_constraint_with_pylock(tmp_path: Path) -> None:
+def test_prepare_python_passes_build_pylock_with_pylock(tmp_path: Path) -> None:
     from appimage.build import _prepare_python
 
     (tmp_path / "pylock.toml").write_text("")
-    (tmp_path / "requirements-build.txt").write_text("")
+    (tmp_path / "pylock.build.toml").write_text("")
     resolved = make_resolved(
         install_targets=["appimage==2.0.1", "."],
         local_install_targets=["."],
         pylock="pylock.toml",
-        build_constraint="requirements-build.txt",
+        build_pylock="pylock.build.toml",
     )
     appdir = tmp_path / "AppDir"
     appdir.mkdir()
@@ -1168,10 +1180,12 @@ def test_prepare_python_passes_build_constraint_with_pylock(tmp_path: Path) -> N
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         _prepare_python(resolved, tarball, appdir, tmp_path)
 
-    local_call, lock_call = [c.args[0] for c in mock_run.call_args_list]
-    assert "--build-constraint" in local_call
-    assert str(tmp_path / "requirements-build.txt") in local_call
-    assert "--build-constraint" not in lock_call
+    backend_call, local_call, lock_call = [c.args[0] for c in mock_run.call_args_list]
+    assert str(tmp_path / "pylock.build.toml") in backend_call
+    assert "--no-build-isolation" in local_call
+    assert "." in local_call
+    assert "--no-build-isolation" not in lock_call
+    assert str(tmp_path / "pylock.toml") in lock_call
 
 
 # ---------------------------------------------------------------------------
@@ -1239,37 +1253,140 @@ def test_generate_lock_omits_uploaded_prior_to_when_unset(tmp_path: Path) -> Non
     assert "--uploaded-prior-to" not in cmd
 
 
-def test_lock_writes_pylock_to_pyproject_when_unset(tmp_path: Path) -> None:
-    from appimage.build import lock
+def _write_project_with_build_system(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["uv_build>=0.12.7,<0.13"]\n'
+        'build-backend = "uv_build"\n'
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+    )
+
+
+def test_generate_build_pylock_raises_for_old_pip(tmp_path: Path) -> None:
+    from appimage.build import _generate_build_pylock
+
+    _write_project_with_build_system(tmp_path)
+    resolved = make_resolved(build_pylock="pylock.build.toml")
+    with patch("appimage.build._pip_version", return_value=(24, 3)), \
+         pytest.raises(RuntimeError, match="does not support"):
+        _generate_build_pylock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
+
+
+def test_generate_build_pylock_raises_without_build_system_requires(tmp_path: Path) -> None:
+    from appimage.build import _generate_build_pylock
 
     _write_minimal_project(tmp_path)
+    resolved = make_resolved(build_pylock="pylock.build.toml")
+    with patch("appimage.build._pip_version", return_value=(25, 1)), \
+         pytest.raises(RuntimeError, match="build-system"):
+        _generate_build_pylock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
+
+
+def test_generate_build_pylock_builds_expected_command(tmp_path: Path) -> None:
+    from appimage.build import _generate_build_pylock
+
+    _write_project_with_build_system(tmp_path)
+    resolved = make_resolved(build_pylock="pylock.build.toml")
+
+    with patch("appimage.build._pip_version", return_value=(25, 1)), \
+         patch("appimage.build.subprocess.run") as mock_run:
+        result = _generate_build_pylock(
+            resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="P7D",
+        )
+
+    assert result == tmp_path / "pylock.build.toml"
+    cmd = mock_run.call_args.args[0]
+    assert "lock" in cmd
+    assert "uv_build>=0.12.7,<0.13" in cmd
+    assert "--only-deps" not in cmd
+    assert "--uploaded-prior-to" in cmd
+    assert "P7D" in cmd
+    assert str(tmp_path / "pylock.build.toml") in cmd
+
+
+def test_generate_build_pylock_default_filename(tmp_path: Path) -> None:
+    from appimage.build import _generate_build_pylock
+
+    _write_project_with_build_system(tmp_path)
+    resolved = make_resolved()
+
+    with patch("appimage.build._pip_version", return_value=(25, 1)), \
+         patch("appimage.build.subprocess.run"):
+        result = _generate_build_pylock(resolved, tmp_path / "python3", tmp_path, uploaded_prior_to="")
+
+    assert result == tmp_path / "pylock.build.toml"
+
+
+def test_write_lock_config_writes_when_unset(tmp_path: Path) -> None:
+    from appimage.build import _write_lock_config
+
+    _write_minimal_project(tmp_path)
+    pyproject_path = tmp_path / "pyproject.toml"
+
+    _write_lock_config(pyproject_path, tmp_path, "pylock", tmp_path / "pylock.toml")
+
+    content = pyproject_path.read_text()
+    assert 'pylock = "pylock.toml"' in content
+
+
+def test_write_lock_config_skips_when_already_set(tmp_path: Path) -> None:
+    from appimage.build import _write_lock_config
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[tool.appimage.build]\npylock = "custom-lock.toml"\n'
+    )
+    pyproject_path = tmp_path / "pyproject.toml"
+
+    _write_lock_config(pyproject_path, tmp_path, "pylock", tmp_path / "pylock.toml")
+
+    content = pyproject_path.read_text()
+    assert content.count("pylock =") == 1
+    assert 'pylock = "custom-lock.toml"' in content
+
+
+def test_lock_writes_both_lock_paths_to_pyproject_when_unset(tmp_path: Path) -> None:
+    from appimage.build import lock
+
+    _write_project_with_build_system(tmp_path)
     config = BuildConfig()
 
     with patch("appimage.build._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
          patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build._generate_lock", return_value=tmp_path / "pylock.toml") as mock_generate:
+         patch("appimage.build._generate_lock", return_value=tmp_path / "pylock.toml") as mock_generate, \
+         patch(
+             "appimage.build._generate_build_pylock", return_value=tmp_path / "pylock.build.toml",
+         ) as mock_generate_build:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         lock(config, tmp_path)
 
     mock_generate.assert_called_once()
+    mock_generate_build.assert_called_once()
     content = (tmp_path / "pyproject.toml").read_text()
     assert 'pylock = "pylock.toml"' in content
+    assert 'build_pylock = "pylock.build.toml"' in content
 
 
 def test_lock_skips_write_when_already_set(tmp_path: Path) -> None:
     from appimage.build import lock
 
     (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["uv_build>=0.12.7,<0.13"]\n'
+        'build-backend = "uv_build"\n'
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
         '[tool.appimage.build]\npylock = "custom-lock.toml"\n'
+        'build_pylock = "custom-build-lock.toml"\n'
     )
     config = BuildConfig.from_pyproject(tmp_path)
 
     with patch("appimage.build._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
          patch("appimage.build.tarfile.open") as mock_tarfile, \
-         patch("appimage.build._generate_lock", return_value=tmp_path / "custom-lock.toml"):
+         patch("appimage.build._generate_lock", return_value=tmp_path / "custom-lock.toml"), \
+         patch("appimage.build._generate_build_pylock", return_value=tmp_path / "custom-build-lock.toml"):
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         lock(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
-    assert content.count("pylock =") == 1
+    # "pylock =" is also a substring of "build_pylock =" — anchor on the
+    # preceding newline so each is counted only on its own line.
+    assert content.count("\npylock =") == 1
+    assert content.count("\nbuild_pylock =") == 1

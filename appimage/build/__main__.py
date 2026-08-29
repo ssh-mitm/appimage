@@ -24,24 +24,35 @@ def _parse_args() -> argparse.Namespace:
         description="Build a Python application as a self-contained AppImage.",
     )
 
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
+    parser.add_argument(
         "--check",
         action="store_true",
-        help="Show resolved configuration and exit without building.",
+        help=(
+            "Show resolved configuration and exit without building. "
+            "Cannot be combined with --init/--lock."
+        ),
     )
-    mode.add_argument(
+    parser.add_argument(
         "--init",
         action="store_true",
-        help="Write auto-detected values to pyproject.toml and exit.",
+        help=(
+            "Write auto-detected values, including the toolchain "
+            "reproducibility pins (python_date, appimagetool_sha256, "
+            "runtime_sha256), to pyproject.toml and exit. Combine with "
+            "--lock to also generate both lock files against the "
+            "now-pinned interpreter in the same run: --init --lock."
+        ),
     )
-    mode.add_argument(
+    parser.add_argument(
         "--lock",
         action="store_true",
         help=(
-            "Generate a hash-pinned pylock.toml for third-party dependencies "
-            "(via 'pip lock', run through the bundled interpreter) and exit. "
-            "Writes 'pylock' to pyproject.toml if not already set."
+            "Generate hash-pinned lock files for third-party dependencies "
+            "(pylock.toml) and the project's own build backend "
+            "(build_pylock, via 'pip lock', run through the bundled "
+            "interpreter) and exit. Writes 'pylock'/'build_pylock' to "
+            "pyproject.toml for whichever isn't already set. Combine with "
+            "--init to pin the toolchain first: --init --lock."
         ),
     )
 
@@ -191,25 +202,25 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--build-constraint",
-        dest="build_constraint",
+        "--build-pylock",
+        dest="build_pylock",
         metavar="PATH",
         help=(
-            "Path to a hash-pinned requirements file (any filename) "
-            "constraining the packaged project's own "
-            "[build-system].requires (overrides pyproject.toml). Passed "
-            "as 'pip install --build-constraint' so its isolated build "
-            "environment is hash-verified too — generate it the same way "
-            "this project generates its own requirements-build.txt, a "
-            "manual step (see docs/reproducible-builds.md)."
+            "Path to a hash-pinned pylock-format file constraining the "
+            "packaged project's own [build-system].requires (overrides "
+            "pyproject.toml). Installed with 'pip install --require-hashes' "
+            "before the project itself is installed with "
+            "'--no-build-isolation', so its otherwise-fresh isolated build "
+            "environment is hash-verified too. Generate it with --lock, "
+            "alongside pylock.toml."
         ),
     )
     parser.add_argument(
-        "--require-build-constraint",
-        dest="require_build_constraint",
+        "--require-build-pylock",
+        dest="require_build_pylock",
         action="store_true",
         help=(
-            "Abort the build if build_constraint is not set (the packaged "
+            "Abort the build if build_pylock is not set (the packaged "
             "project's own build backend would otherwise be installed "
             "unverified), instead of just warning."
         ),
@@ -258,8 +269,8 @@ _CLI_OVERRIDE_FIELDS: Final = (
     "require_zsyncmake",
     "pylock",
     "require_pylock",
-    "build_constraint",
-    "require_build_constraint",
+    "build_pylock",
+    "require_build_pylock",
     "reproducible",
 )
 
@@ -289,14 +300,22 @@ def main() -> None:
 
     _apply_cli_overrides(config, args)
 
+    if args.check and (args.init or args.lock):
+        sys.exit("Error: --check cannot be combined with --init or --lock.")
+
     try:
         if args.check:
             ok = check(config, project_root)
             sys.exit(0 if ok else 1)
-        elif args.init:
-            write_config(config, project_root)
-        elif args.lock:
-            lock(config, project_root, uploaded_prior_to=args.uploaded_prior_to or "")
+        elif args.init or args.lock:
+            if args.init:
+                write_config(config, project_root)
+                # Re-read so --lock (below) pins hashes against the
+                # python_date --init just wrote, not a stale/latest one.
+                config = BuildConfig.from_pyproject(project_root)
+                _apply_cli_overrides(config, args)
+            if args.lock:
+                lock(config, project_root, uploaded_prior_to=args.uploaded_prior_to or "")
         else:
             build(config, project_root)
     except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
