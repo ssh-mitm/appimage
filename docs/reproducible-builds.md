@@ -229,6 +229,67 @@ needs) before generating, but a build against an existing `pylock.toml`
 with an older bundled pip will fail with a plain pip error rather than
 this tool's own message.
 
+## Verified build backend
+
+`pylock` hash-pins the packaged project's *third-party* dependencies —
+not the project itself. Installing the project's own source always
+triggers a PEP 517 isolated build, and by default pip populates that
+isolated environment by resolving the project's `[build-system].requires`
+(e.g. `setuptools`, `hatchling`, `poetry-core`) fresh from the index, on
+every single build. Unpinned and unverified — the same class of gap
+`pylock` closes for runtime dependencies, just one level down, and one
+`--only-deps` at lock-generation time deliberately leaves open (the local
+project has no stable hash to pin between source edits).
+
+`build_constraint` closes it, the same way this project's own CI does for
+*its own* build backend (see
+[development chapter](develop/reproducible-builds.md)):
+
+```toml
+[tool.appimage.build]
+build_constraint = "requirements-build.txt"
+```
+
+There is no fixed filename or location — `requirements-build.txt` above
+is just this project's own choice, reused as the example because it's
+what generates the value in the next section. Point `build_constraint` at
+whatever path fits your project's own conventions.
+
+Passed straight through as
+[`pip install --build-constraint`](https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-build-constraint),
+which pip already supports for exactly this — pinning (and, given a
+hash-pinned file, hash-verifying) what gets installed into an isolated
+build environment, without needing `--no-build-isolation`. The build
+still happens in a fresh, isolated environment; only what's installed
+into it is now constrained by this file instead of resolved live.
+
+Generate that file the same way this project generates its own — with
+`pip-compile --generate-hashes` against your project's own
+`[build-system].requires` — and commit it to your repo under whichever
+name/path you set `build_constraint` to. This is deliberately a manual,
+one-time-per-change step you run yourself, not something `appimage.build`
+generates or CI resolves on your behalf: a lockfile regenerated
+automatically on every run would just move the unpinned resolution one
+step sideways instead of removing it.
+
+`require_build_constraint = true` aborts the build instead of warning
+when `build_constraint` isn't set, mirroring `require_pylock`.
+
+### Known limits
+
+`build_constraint` only covers packages pip's own isolated-build-env
+resolution installs while building your project's wheel — it doesn't
+change how the project's *own* `[build-system].requires` version
+specifier itself is resolved (an unpinned specifier like `"hatchling"`
+still floats to whatever the constraint file allows, or latest if the
+package isn't listed there at all). For most backends, pin
+`[build-system].requires` to an exact version in your own
+`pyproject.toml` for the constraint file to actually pin one version
+rather than merely bound a range — see the [development
+chapter](develop/reproducible-builds.md) for this project's own choice of
+backend and how it's pinned (a bounded range rather than an exact pin,
+for reasons specific to that backend).
+
 ## Not covered here
 
 This page is about the AppImages `appimage.build` produces for *your*

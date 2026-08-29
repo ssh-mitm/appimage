@@ -191,6 +191,30 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--build-constraint",
+        dest="build_constraint",
+        metavar="PATH",
+        help=(
+            "Path to a hash-pinned requirements file (any filename) "
+            "constraining the packaged project's own "
+            "[build-system].requires (overrides pyproject.toml). Passed "
+            "as 'pip install --build-constraint' so its isolated build "
+            "environment is hash-verified too — generate it the same way "
+            "this project generates its own requirements-build.txt, a "
+            "manual step (see docs/reproducible-builds.md)."
+        ),
+    )
+    parser.add_argument(
+        "--require-build-constraint",
+        dest="require_build_constraint",
+        action="store_true",
+        help=(
+            "Abort the build if build_constraint is not set (the packaged "
+            "project's own build backend would otherwise be installed "
+            "unverified), instead of just warning."
+        ),
+    )
+    parser.add_argument(
         "--uploaded-prior-to",
         dest="uploaded_prior_to",
         metavar="PnD",
@@ -234,6 +258,8 @@ _CLI_OVERRIDE_FIELDS: Final = (
     "require_zsyncmake",
     "pylock",
     "require_pylock",
+    "build_constraint",
+    "require_build_constraint",
     "reproducible",
 )
 

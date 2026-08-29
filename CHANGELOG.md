@@ -23,9 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--lock` CLI mode: generates/refreshes `pylock.toml` via `pip lock` (pip >= 25.1), run through the bundled interpreter so hashes match its actual platform/Python build; writes `pylock` to `pyproject.toml` if not already set. `--uploaded-prior-to PnD` passes a cooldown window through to `pip lock` to exclude just-published releases from the resolution
 - `--check`/`build` now always print a "Reproducibility: N/3 pins set" and "Dependency verification: ..." summary — previously the three reproducibility pins (`python_date`, `appimagetool_sha256`, `runtime_sha256`) had no visibility at all until either a real build resolved them or `reproducible` was already turned on and failed
 - `tests/test_build.py`: first unit test coverage for the build module
+- `build_constraint` config key / `--build-constraint` CLI option: path to a hash-pinned requirements file (any filename) constraining the packaged project's *own* `[build-system].requires`. Installing the project's own source always triggers a PEP 517 isolated build, which otherwise installs that backend fresh from the index, unpinned and unverified, on every build — a gap `pylock` explicitly does not cover, since it excludes the local project via `--only-deps` at generation time. Passed through as `pip install --build-constraint`
+- `require_build_constraint` config key / `--require-build-constraint` CLI flag: abort the build instead of warning when `build_constraint` is not set
+- `--check`'s "Dependency verification" summary line gains a sibling "Build backend verification" line for `build_constraint`
 
 ### Changed
 
+- CI now installs this package's own build dependencies hash-verified (`pip install --require-hashes -r requirements-build.txt`) and builds the release wheel with `pip wheel --build-constraint requirements-build.txt --no-deps`, instead of an unverified `hatch build`; a new `reproducible-build` job runs `packaging/verify-reproducible-build.sh` on every push/PR to prove the wheel build is bit-identical across independent runs
 - Installed packages are byte-compiled via `pip install --no-compile` + `compileall --invalidation-mode unchecked-hash` instead of pip's default timestamp-based bytecode cache
 - Every file and directory in the AppDir has its mtime normalized to `SOURCE_DATE_EPOCH` immediately before packaging
 - `SOURCE_DATE_EPOCH` is now also passed into appimagetool's own process environment during packaging, not just applied to the AppDir

@@ -61,6 +61,8 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "require_zsyncmake": False,
         "pylock": "",
         "require_pylock": False,
+        "build_constraint": "",
+        "require_build_constraint": False,
         "reproducible": False,
         "sources": {},
         "warnings": [],
@@ -775,6 +777,44 @@ def test_pylock_noop_when_configured(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# build_constraint (build-backend hash-pinning)
+# ---------------------------------------------------------------------------
+
+def _has_build_constraint_message(messages: list[str]) -> bool:
+    return any("No build_constraint configured" in m for m in messages)
+
+
+def test_build_constraint_warns_by_default(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert _has_build_constraint_message(resolved.warnings)
+
+
+def test_build_constraint_errors_with_require_build_constraint(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(require_build_constraint=True)
+
+    resolved = _resolve(config, tmp_path)
+
+    assert not _has_build_constraint_message(resolved.warnings)
+    assert _has_build_constraint_message(resolved.errors)
+
+
+def test_build_constraint_noop_when_configured(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(build_constraint="requirements-build.txt")
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.errors == []
+    assert not _has_build_constraint_message(resolved.warnings)
+
+
+# ---------------------------------------------------------------------------
 # _reproducibility_summary
 # ---------------------------------------------------------------------------
 
@@ -789,6 +829,7 @@ def test_reproducibility_summary_reports_zero_of_three_by_default() -> None:
     assert any("--init" in line for line in lines)
     assert any("Dependency verification: pylock not set" in line for line in lines)
     assert any("--lock" in line for line in lines)
+    assert any("Build backend verification: build_constraint not set" in line for line in lines)
 
 
 def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
@@ -799,6 +840,7 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
         appimagetool_sha256="a" * 64,
         runtime_sha256="b" * 64,
         pylock="pylock.toml",
+        build_constraint="requirements-build.txt",
     )
 
     lines = _reproducibility_summary(resolved)
@@ -806,6 +848,10 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
     assert any("Reproducibility: 3/3 pins set" in line for line in lines)
     assert not any("--init" in line for line in lines)
     assert any("Dependency verification: pylock set (pylock.toml)" in line for line in lines)
+    assert any(
+        "Build backend verification: build_constraint set (requirements-build.txt)" in line
+        for line in lines
+    )
 
 
 def test_reproducibility_summary_reports_partial_pins() -> None:
@@ -865,6 +911,88 @@ def test_prepare_python_raises_when_pylock_missing(tmp_path: Path) -> None:
         mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
         with pytest.raises(FileNotFoundError):
             _prepare_python(resolved, tarball, appdir, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# _build_constraint_args / build_constraint wired into pip installs
+# ---------------------------------------------------------------------------
+
+def test_build_constraint_args_empty_when_unset(tmp_path: Path) -> None:
+    from appimage.build import _build_constraint_args
+
+    resolved = make_resolved()
+
+    assert _build_constraint_args(resolved, tmp_path) == []
+
+
+def test_build_constraint_args_raises_when_file_missing(tmp_path: Path) -> None:
+    from appimage.build import _build_constraint_args
+
+    resolved = make_resolved(build_constraint="requirements-build.txt")
+
+    with pytest.raises(FileNotFoundError):
+        _build_constraint_args(resolved, tmp_path)
+
+
+def test_build_constraint_args_when_configured(tmp_path: Path) -> None:
+    from appimage.build import _build_constraint_args
+
+    (tmp_path / "requirements-build.txt").write_text("")
+    resolved = make_resolved(build_constraint="requirements-build.txt")
+
+    args = _build_constraint_args(resolved, tmp_path)
+
+    assert args == ["--build-constraint", str(tmp_path / "requirements-build.txt")]
+
+
+def test_prepare_python_passes_build_constraint_without_pylock(tmp_path: Path) -> None:
+    from appimage.build import _prepare_python
+
+    (tmp_path / "requirements-build.txt").write_text("")
+    resolved = make_resolved(
+        install_targets=["appimage==2.0.1", "."],
+        build_constraint="requirements-build.txt",
+    )
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+    tarball = tmp_path / "python.tar.gz"
+    tarball.write_bytes(b"")
+
+    with patch("appimage.build.tarfile.open") as mock_tarfile, \
+         patch("appimage.build.subprocess.run") as mock_run:
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        _prepare_python(resolved, tarball, appdir, tmp_path)
+
+    (call,) = [c.args[0] for c in mock_run.call_args_list]
+    assert "--build-constraint" in call
+    assert str(tmp_path / "requirements-build.txt") in call
+
+
+def test_prepare_python_passes_build_constraint_with_pylock(tmp_path: Path) -> None:
+    from appimage.build import _prepare_python
+
+    (tmp_path / "pylock.toml").write_text("")
+    (tmp_path / "requirements-build.txt").write_text("")
+    resolved = make_resolved(
+        install_targets=["appimage==2.0.1", "."],
+        local_install_targets=["."],
+        pylock="pylock.toml",
+        build_constraint="requirements-build.txt",
+    )
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+    tarball = tmp_path / "python.tar.gz"
+    tarball.write_bytes(b"")
+
+    with patch("appimage.build.tarfile.open") as mock_tarfile, \
+         patch("appimage.build.subprocess.run") as mock_run:
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        _prepare_python(resolved, tarball, appdir, tmp_path)
+
+    local_call, lock_call = [c.args[0] for c in mock_run.call_args_list]
+    assert "--build-constraint" in local_call
+    assert str(tmp_path / "requirements-build.txt") in local_call
+    assert "--build-constraint" not in lock_call
 
 
 # ---------------------------------------------------------------------------

@@ -175,6 +175,27 @@ class BuildConfig:
     require_pylock : bool
         When true, abort the build if ``pylock`` is not set — instead of
         logging a warning and installing dependencies unverified.
+    build_constraint : str
+        Path to a hash-pinned requirements file, relative to the project
+        root — any filename or location; there is no fixed convention —
+        pinning the packaged project's *own* ``[build-system].requires``
+        (e.g. ``setuptools``, ``hatchling``, ``poetry-core``) to an exact
+        version and sha256 hash. Installing the project from source always
+        triggers a PEP 517 isolated build, which otherwise installs that
+        backend fresh from the index, unpinned and unverified, on every
+        build — a gap ``pylock`` does not cover, since ``--only-deps``
+        deliberately excludes the local project when generating it. When
+        set, passed as ``pip install --build-constraint`` so the isolated
+        build environment is populated from this file instead. Generate it
+        the same way this project generates its own ``requirements-build.txt``
+        (see ``packaging/update-requirements.sh`` and
+        docs/reproducible-builds.md) — a manual, repo-committed step under
+        whatever name/path fits your project, not something run
+        automatically here.
+    require_build_constraint : bool
+        When true, abort the build if ``build_constraint`` is not set —
+        instead of logging a warning and installing the build backend
+        unverified.
     reproducible : bool
         Shortcut that sets every option needed for a build that is
         reproducible across machines and over time, not just within the
@@ -213,6 +234,8 @@ class BuildConfig:
     require_zsyncmake: bool = False
     pylock: str = ""
     require_pylock: bool = False
+    build_constraint: str = ""
+    require_build_constraint: bool = False
     reproducible: bool = False
 
     @classmethod
@@ -272,6 +295,8 @@ class BuildConfig:
             require_zsyncmake=cfg.get("require_zsyncmake", False),
             pylock=cfg.get("pylock", ""),
             require_pylock=cfg.get("require_pylock", False),
+            build_constraint=cfg.get("build_constraint", ""),
+            require_build_constraint=cfg.get("require_build_constraint", False),
             reproducible=cfg.get("reproducible", False),
         )
 
@@ -306,6 +331,8 @@ class _ResolvedBuild:
     require_zsyncmake: bool
     pylock: str
     require_pylock: bool
+    build_constraint: str
+    require_build_constraint: bool
     reproducible: bool
     sources: dict[str, str]
     warnings: list[str]
@@ -575,6 +602,17 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         )
         (errors if config.require_pylock else warnings).append(pylock_msg)
 
+    if not config.build_constraint:
+        build_constraint_msg = (
+            "No build_constraint configured — the packaged project's own "
+            "build backend (declared in its [build-system].requires) is "
+            "installed without hash verification into the isolated build "
+            "environment. Generate a hash-pinned requirements file (any "
+            "filename; see docs/reproducible-builds.md) and point "
+            "build_constraint at its path in [tool.appimage.build]."
+        )
+        (errors if config.require_build_constraint else warnings).append(build_constraint_msg)
+
     return _ResolvedBuild(
         app=app,
         entry_point=entry_point,
@@ -602,6 +640,8 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         require_zsyncmake=require_zsyncmake,
         pylock=config.pylock,
         require_pylock=config.require_pylock,
+        build_constraint=config.build_constraint,
+        require_build_constraint=config.require_build_constraint,
         reproducible=config.reproducible,
         sources=sources,
         warnings=warnings,
@@ -633,6 +673,7 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         ("runtime_file", resolved.runtime_file),
         ("runtime_sha256", resolved.runtime_sha256),
         ("pylock", resolved.pylock),
+        ("build_constraint", resolved.build_constraint),
     ]
     rows = [(name, value, cfg) for name, value in candidates if value]
     if resolved.reproducible:
@@ -643,6 +684,8 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         rows.append(("require_zsyncmake", "true", cfg))
     if resolved.require_pylock:
         rows.append(("require_pylock", "true", cfg))
+    if resolved.require_build_constraint:
+        rows.append(("require_build_constraint", "true", cfg))
     return rows
 
 
@@ -650,11 +693,12 @@ _REPRODUCIBILITY_PINS: Final = ("python_date", "appimagetool_sha256", "runtime_s
 
 
 def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
-    """Return a short status summary of the two independent pinning stories.
+    """Return a short status summary of the three independent pinning stories.
 
     Unlike the individual warnings above, this always reflects the current
-    state — not just when ``reproducible``/``require_pylock`` are set and
-    something is missing. Without it, a plain ``--check`` gives no signal
+    state — not just when ``reproducible``/``require_pylock``/
+    ``require_build_constraint`` are set and something is missing. Without
+    it, a plain ``--check`` gives no signal
     at all about the three reproducibility pins: they only ever surface as
     a warning deep inside a real ``build()`` run (when appimagetool/
     runtime/python are actually resolved) or as a hard error once
@@ -674,7 +718,13 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
         if resolved.pylock
         else "Dependency verification: pylock not set — run --lock to generate pylock.toml"
     )
-    return [repro_line, pylock_line]
+    build_constraint_line = (
+        f"Build backend verification: build_constraint set ({resolved.build_constraint})"
+        if resolved.build_constraint
+        else "Build backend verification: build_constraint not set — the packaged "
+        "project's own build backend is installed unverified"
+    )
+    return [repro_line, pylock_line, build_constraint_line]
 
 
 def _format_check(resolved: _ResolvedBuild) -> None:
@@ -1478,6 +1528,27 @@ def _resolve_runtime_file(
     return runtime
 
 
+def _build_constraint_args(resolved: _ResolvedBuild, project_root: Path) -> list[str]:
+    """Return ``--build-constraint`` pip args, or an empty list if unset.
+
+    Installing the local project always triggers a PEP 517 isolated build,
+    which otherwise installs the project's own ``[build-system].requires``
+    fresh from the index — unpinned and unverified — into that isolated
+    environment, on every build. ``pip install --build-constraint`` pins
+    (and, given a hash-pinned file, hash-verifies) exactly what goes into
+    that isolated environment instead, the same mechanism this project's
+    own CI uses for its own build backend (see
+    docs/reproducible-builds.md).
+    """
+    if not resolved.build_constraint:
+        return []
+    constraint_path = project_root / resolved.build_constraint
+    if not constraint_path.exists():
+        msg = f"build_constraint file not found: {constraint_path}"
+        raise FileNotFoundError(msg)
+    return ["--build-constraint", str(constraint_path)]
+
+
 def _install_from_pylock(
     resolved: _ResolvedBuild,
     python_bin: Path,
@@ -1504,7 +1575,10 @@ def _install_from_pylock(
 
     _log.info("Installing project (unverified, own source): %s", " ".join(resolved.local_install_targets))
     subprocess.run(  # noqa: S603  # nosec B603
-        [str(python_bin), "-m", "pip", "install", "--no-compile", "--no-deps", *resolved.local_install_targets],
+        [
+            str(python_bin), "-m", "pip", "install", "--no-compile", "--no-deps",
+            *_build_constraint_args(resolved, project_root), *resolved.local_install_targets,
+        ],
         cwd=project_root,
         check=True,
     )
@@ -1538,7 +1612,10 @@ def _prepare_python(
     else:
         _log.info("Installing packages: %s", " ".join(resolved.install_targets))
         subprocess.run(  # noqa: S603  # nosec B603
-            [str(python_bin), "-m", "pip", "install", "--no-compile", *resolved.install_targets],
+            [
+                str(python_bin), "-m", "pip", "install", "--no-compile",
+                *_build_constraint_args(resolved, project_root), *resolved.install_targets,
+            ],
             cwd=project_root,
             check=True,
         )
