@@ -47,6 +47,7 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "build_dir": "build",
         "dist_dir": "dist",
         "update_info": "",
+        "update_info_suggested": "",
         "env": {},
         "extra_files": {},
         "hooks": {},
@@ -459,6 +460,149 @@ def test_zsyncmake_warns_not_errors_with_verify_downloads_alone(tmp_path: Path) 
 
     assert resolved.errors == []
     assert any("zsyncmake is not on PATH" in w for w in resolved.warnings)
+
+
+# ---------------------------------------------------------------------------
+# update_info auto-detection from [project.urls]
+# ---------------------------------------------------------------------------
+
+def _has_update_info_suggestion_message(messages: list[str]) -> bool:
+    return any("detected GitHub repo" in m for m in messages)
+
+
+def test_update_info_suggested_from_source_url(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[project.urls]\nSource = "https://github.com/acme/myapp"\n'
+    )
+    config = BuildConfig()
+
+    with patch("appimage.build.platform.machine", return_value="x86_64"):
+        resolved = _resolve(config, tmp_path)
+
+    assert resolved.update_info == ""
+    assert resolved.update_info_suggested == (
+        "gh-releases-zsync|acme|myapp|latest|myapp-x86_64.AppImage.zsync"
+    )
+    assert _has_update_info_suggestion_message(resolved.warnings)
+
+
+def test_update_info_no_suggestion_without_project_urls(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.update_info_suggested == ""
+    assert not _has_update_info_suggestion_message(resolved.warnings)
+
+
+def test_update_info_no_suggestion_for_non_repo_urls(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        "[project.urls]\n"
+        'Tracker = "https://github.com/acme/myapp/issues"\n'
+        'Changelog = "https://github.com/acme/myapp/blob/main/CHANGELOG.md"\n'
+    )
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.update_info_suggested == ""
+    assert not _has_update_info_suggestion_message(resolved.warnings)
+
+
+def test_update_info_no_suggestion_when_ambiguous(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        "[project.urls]\n"
+        'Homepage = "https://github.com/acme/one"\n'
+        'Download = "https://github.com/acme/two"\n'
+    )
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.update_info_suggested == ""
+    assert not _has_update_info_suggestion_message(resolved.warnings)
+
+
+def test_update_info_prefers_preferred_key_over_ambiguous_fallback(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        "[project.urls]\n"
+        'Homepage = "https://github.com/other/x"\n'
+        'Source = "https://github.com/acme/myapp"\n'
+    )
+    config = BuildConfig()
+
+    with patch("appimage.build.platform.machine", return_value="x86_64"):
+        resolved = _resolve(config, tmp_path)
+
+    assert resolved.update_info_suggested == (
+        "gh-releases-zsync|acme|myapp|latest|myapp-x86_64.AppImage.zsync"
+    )
+
+
+def test_update_info_explicit_value_skips_suggestion(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[project.urls]\nSource = "https://github.com/acme/myapp"\n'
+    )
+    config = BuildConfig(update_info="zsync|https://example/app.AppImage.zsync")
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.update_info == "zsync|https://example/app.AppImage.zsync"
+    assert resolved.update_info_suggested == ""
+    assert not _has_update_info_suggestion_message(resolved.warnings)
+
+
+def test_write_config_writes_suggested_update_info(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[project.urls]\nSource = "https://github.com/acme/myapp"\n'
+        "[tool.appimage.build]\n"
+        'app = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
+    )
+    config = BuildConfig.from_pyproject(tmp_path)
+
+    tool_path = tmp_path / "appimagetool"
+    runtime_path = tmp_path / "runtime-x86_64"
+
+    with patch("appimage.build.platform.machine", return_value="x86_64"), \
+         patch("appimage.build._resolve_appimagetool", return_value=tool_path), \
+         patch("appimage.build._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.build._appimagetool_version_string", return_value="continuous build"), \
+         patch("appimage.build._sha256_file", return_value="c" * 64):
+        write_config(config, tmp_path)
+
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert 'update_info = "gh-releases-zsync|acme|myapp|latest|myapp-x86_64.AppImage.zsync"' in content
+
+
+def test_write_config_does_not_overwrite_existing_update_info(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[project.urls]\nSource = "https://github.com/acme/myapp"\n'
+        "[tool.appimage.build]\n"
+        'app = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
+        'update_info = "custom|value"\n'
+    )
+    config = BuildConfig.from_pyproject(tmp_path)
+
+    tool_path = tmp_path / "appimagetool"
+    runtime_path = tmp_path / "runtime-x86_64"
+
+    with patch("appimage.build._resolve_appimagetool", return_value=tool_path), \
+         patch("appimage.build._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.build._appimagetool_version_string", return_value="continuous build"), \
+         patch("appimage.build._sha256_file", return_value="c" * 64):
+        write_config(config, tmp_path)
+
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert content.count("update_info") == 1
+    assert 'update_info = "custom|value"' in content
 
 
 # ---------------------------------------------------------------------------

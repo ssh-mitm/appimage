@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `build_constraint` config key / `--build-constraint` CLI option: path to a hash-pinned requirements file (any filename) constraining the packaged project's *own* `[build-system].requires`. Installing the project's own source always triggers a PEP 517 isolated build, which otherwise installs that backend fresh from the index, unpinned and unverified, on every build — a gap `pylock` explicitly does not cover, since it excludes the local project via `--only-deps` at generation time. Passed through as `pip install --build-constraint`
 - `require_build_constraint` config key / `--require-build-constraint` CLI flag: abort the build instead of warning when `build_constraint` is not set
 - `--check`'s "Dependency verification" summary line gains a sibling "Build backend verification" line for `build_constraint`
+- `update_info` auto-detection: derives a `gh-releases-zsync` string from `[project.urls]` when an unambiguous GitHub repo is found and `update_info` isn't already set — surfaced as a warning via `--check`, written by `--init`, never silently applied to a live build (a wrong guess would embed a broken update pointer in the packaged AppImage)
 
 ### Changed
 

@@ -40,6 +40,14 @@ _PBS_API: Final = (
     "https://api.github.com/repos/astral-sh/python-build-standalone/releases"
 )
 
+# Used to suggest an update_info value from [project.urls] — matches only a
+# bare repository root (no /issues, /blob/... paths), since those aren't
+# valid gh-releases-zsync targets.
+_GITHUB_REPO_PATTERN: Final = re.compile(
+    r"^https?://github\.com/([^/\s]+)/([^/\s]+?)(?:\.git)?/?$",
+)
+_PREFERRED_URL_KEYS: Final = ("source", "source code", "repository", "github", "code")
+
 # AppImage/AppImageKit's classic C appimagetool is no longer maintained (its
 # bundled mksquashfs has a documented non-deterministic multi-threaded
 # compression bug, see https://github.com/AppImage/AppImageKit/issues/929)
@@ -317,6 +325,7 @@ class _ResolvedBuild:
     build_dir: str
     dist_dir: str
     update_info: str
+    update_info_suggested: str
     env: dict[str, str]
     extra_files: dict[str, str]
     hooks: dict[str, str]
@@ -429,6 +438,87 @@ def _find_desktop(app: str, project_root: Path) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _detect_github_repo(project: dict[str, object]) -> tuple[str, str] | None:
+    """Find an unambiguous ``owner/repo`` pair from ``[project.urls]``.
+
+    Checks well-known keys first (``source``, ``repository``, ``github``,
+    ``code``, case-insensitive); falls back to scanning all url values only
+    if exactly one matches the strict bare-repo pattern (no ``/issues``,
+    ``/blob/...`` paths — those aren't valid ``gh-releases-zsync`` targets).
+
+    Parameters
+    ----------
+    project : dict[str, object]
+        The ``[project]`` table, which may contain a ``urls`` sub-table.
+
+    Returns
+    -------
+    tuple[str, str] | None
+        ``(owner, repo)`` if an unambiguous match was found, else ``None``.
+
+    """
+    urls: dict[str, object] = project.get("urls", {})  # type: ignore[assignment]
+    if not urls:
+        return None
+
+    lower = {str(k).lower(): str(v) for k, v in urls.items()}
+    for key in _PREFERRED_URL_KEYS:
+        if key in lower and (match := _GITHUB_REPO_PATTERN.match(lower[key])):
+            return match.group(1), match.group(2)
+
+    candidates: set[tuple[str, str]] = {
+        (match.group(1), match.group(2))
+        for v in urls.values()
+        if (match := _GITHUB_REPO_PATTERN.match(str(v)))
+    }
+    if len(candidates) == 1:
+        return next(iter(candidates))
+    return None
+
+
+def _suggest_update_info(app: str, project: dict[str, object], warnings: list[str]) -> str:
+    """Suggest a ``gh-releases-zsync`` ``update_info`` string from ``[project.urls]``.
+
+    Never applied automatically — a wrong guess (private repo, no GitHub
+    Releases flow, different asset naming) would embed a plausible-looking
+    but broken update pointer into the packaged AppImage. Only surfaced as
+    a warning (``--check``) and written by ``--init``, same as every other
+    auto-detected field. Only called when ``update_info`` isn't already set.
+
+    Parameters
+    ----------
+    app : str
+        Resolved application name, used as the AppImage filename prefix.
+    project : dict[str, object]
+        The ``[project]`` table.
+    warnings : list[str]
+        Appended to in place with a suggestion message when a repo is
+        found — avoids a second return value purely to shuttle it back to
+        the caller's own warnings list.
+
+    Returns
+    -------
+    str
+        The suggested string, or an empty string if no unambiguous GitHub
+        repo could be identified (most projects don't want zsync updates,
+        and silence is correct there — nothing is appended to *warnings*).
+
+    """
+    repo = _detect_github_repo(project)
+    if repo is None:
+        return ""
+    owner, name = repo
+    arch = platform.machine()
+    suggestion = f"gh-releases-zsync|{owner}|{name}|latest|{app}-{arch}.AppImage.zsync"
+    warnings.append(
+        f"update_info not set — detected GitHub repo {owner}/{name} from "
+        f'[project.urls]. Add update_info = "{suggestion}" in '
+        "[tool.appimage.build] to enable zsync delta-updates, or run --init "
+        "to write it automatically.",
+    )
+    return suggestion
 
 
 def _resolve_app(config: BuildConfig, project: dict[str, object]) -> tuple[str, str]:
@@ -626,6 +716,9 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         build_dir=config.build_dir,
         dist_dir=config.dist_dir,
         update_info=config.update_info,
+        update_info_suggested=(
+            "" if config.update_info else _suggest_update_info(app, project, warnings)
+        ),
         env=config.env,
         extra_files=config.extra_files,
         hooks=config.hooks,
@@ -843,6 +936,8 @@ def _auto_detected_fields(
         new["icon"] = str(resolved.icon.relative_to(project_root))
     if "desktop" not in existing and resolved.desktop is not None:
         new["desktop"] = str(resolved.desktop.relative_to(project_root))
+    if "update_info" not in existing and resolved.update_info_suggested:
+        new["update_info"] = resolved.update_info_suggested
     return new
 
 
