@@ -14,6 +14,7 @@ from appimage.ctl import (
     check,
     enable_reproducible,
     lock,
+    update_tools,
     write_config,
 )
 
@@ -105,6 +106,26 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
             "Expected sha256 of the python-build-standalone tarball. Fresh "
             "downloads are already verified against GitHub's published digest "
             "even without this."
+        ),
+    )
+    parser.add_argument(
+        "--appimage-version",
+        dest="appimage_version",
+        metavar="VERSION",
+        help=(
+            "Exact version of the bundled appimage runtime module to install "
+            "(overrides pyproject.toml). Empty resolves to the version of "
+            "appimage.ctl currently doing the build."
+        ),
+    )
+    parser.add_argument(
+        "--appimage-sha256",
+        dest="appimage_sha256",
+        metavar="SHA256",
+        help=(
+            "Expected sha256 of the appimage runtime module wheel for "
+            "appimage_version. When empty, the digest PyPI publishes for "
+            "that release is looked up and used instead."
         ),
     )
     parser.add_argument(
@@ -288,6 +309,19 @@ def _parse_args() -> argparse.Namespace:
             "appimagetool_sha256/runtime_sha256."
         ),
     )
+    subparsers.add_parser(
+        "update-tools",
+        parents=[common],
+        help=(
+            "Move every toolchain pin forward to whatever's currently "
+            "available — python_date, appimage_version/appimage_sha256, "
+            "appimagetool_version/appimagetool_sha256, runtime_sha256, and "
+            "appimagectl_version — overwriting what's already configured. "
+            "Unlike 'init', which only fills in what's missing. Leaves "
+            "pylock/build_pylock (regenerate those with 'lock') and project "
+            "metadata untouched."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -303,6 +337,8 @@ _CLI_OVERRIDE_FIELDS: Final = (
     "appimagetool_sha256",
     "python_archive",
     "python_sha256",
+    "appimage_version",
+    "appimage_sha256",
     "runtime_file",
     "runtime_sha256",
     "verify_downloads",
@@ -356,6 +392,8 @@ def main() -> None:
             )
         elif args.command == "build-appdir":
             build_appdir(config, project_root)
+        elif args.command == "update-tools":
+            update_tools(config, project_root)
         else:
             build(config, project_root)
     except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:

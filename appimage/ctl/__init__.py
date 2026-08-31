@@ -188,6 +188,41 @@ class BuildConfig:
         reproducibility checklist marks it as a *trusted, unverified*
         pin rather than showing it identically to a hash-checked one, since
         that trust is asserted by you, not established by this tool.
+    appimage_version : str
+        Exact version of the ``appimage`` runtime module — the one AppRun
+        and the ``--python-*`` flags depend on — to install into the
+        bundled site-packages, regardless of the packaged project's own
+        declared dependencies. Empty resolves to the version of
+        ``appimage.ctl`` currently doing the build, which is what pins the
+        module to *some* known version even unset — but that's implicit,
+        not a committed value in ``pyproject.toml``, so it can silently
+        differ between machines running different ``appimage.ctl``
+        releases. Set explicitly (``init`` does this automatically) for
+        the same reason ``python_date`` is pinned rather than left to
+        resolve "latest" fresh every time.
+    appimage_sha256 : str
+        Expected sha256 of the ``appimage`` wheel for ``appimage_version``.
+        When empty, the digest PyPI publishes for that release is looked
+        up and used instead (a network call, best-effort — falls back to
+        a warning, or a hard error under ``verify_downloads``, if it
+        can't be reached) — set explicitly to verify without that lookup,
+        e.g. for a fully offline build.
+    appimagectl_version : str
+        Expected version of ``appimage.ctl`` itself — the tool doing the
+        build, not the bundled runtime module (``appimage_version`` above,
+        a different concern). Config-only — deliberately no CLI override,
+        since the entire point is a committed value to compare *against*,
+        not something a single invocation should be able to wave away.
+        Empty skips the check (no expectation recorded, so no possible
+        drift). Which version of ``appimage.ctl`` actually gets installed
+        remains ordinary Python dependency management on your end (pip,
+        pipx, a pinned dev-dependency, ...); this only records what that
+        was expected to resolve to, so a later drift — a colleague, or CI,
+        running a newer or older ``appimage.ctl`` than the project was
+        last built with — surfaces as a visible warning (or a hard error
+        under ``verify_downloads``) instead of silently changing build
+        behavior no other pin here would catch. ``init`` writes the
+        currently-running version automatically.
     runtime_file : str
         Path to a local AppImage runtime ELF stub, passed to appimagetool as
         ``--runtime-file``. When empty, it is looked up in the build cache
@@ -249,9 +284,10 @@ class BuildConfig:
         Shortcut that sets every option needed for a build that is
         reproducible across machines and over time, not just within the
         current build environment: implies ``verify_downloads`` and
-        ``require_zsyncmake``, and additionally requires ``python_date``,
+        ``require_zsyncmake``, and additionally requires ``python_date``
+        (or ``python_dir``), ``appimage_version``, ``appimage_sha256``,
         ``appimagetool_sha256``, and ``runtime_sha256`` to already be set
-        — resolving those three fresh on every build is exactly what
+        — resolving any of those fresh on every build is exactly what
         defeats cross-machine reproducibility (see
         docs/reproducible-builds.md). Run ``init`` first to write them.
 
@@ -278,6 +314,9 @@ class BuildConfig:
     python_archive: str = ""
     python_sha256: str = ""
     python_dir: str = ""
+    appimage_version: str = ""
+    appimage_sha256: str = ""
+    appimagectl_version: str = ""
     runtime_file: str = ""
     runtime_sha256: str = ""
     verify_downloads: bool = False
@@ -340,6 +379,9 @@ class BuildConfig:
             python_archive=cfg.get("python_archive", ""),
             python_sha256=cfg.get("python_sha256", ""),
             python_dir=cfg.get("python_dir", ""),
+            appimage_version=cfg.get("appimage_version", ""),
+            appimage_sha256=cfg.get("appimage_sha256", ""),
+            appimagectl_version=cfg.get("appimagectl_version", ""),
             runtime_file=cfg.get("runtime_file", ""),
             runtime_sha256=cfg.get("runtime_sha256", ""),
             verify_downloads=cfg.get("verify_downloads", False),
@@ -361,6 +403,9 @@ class _ResolvedBuild:
     install_targets: list[str]
     local_install_targets: list[str]
     appimage_pin: str
+    appimage_version: str
+    appimage_sha256: str
+    appimagectl_version: str
     python: str
     python_date: str
     icon: Path | None
@@ -719,9 +764,13 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     # The `appimage` runtime module handles entry point dispatch and the
     # `--python-*` flags inside the built AppImage. It must be installed into
     # the bundled site-packages regardless of whether the packaged project
-    # declares it as a dependency. Pinning to the currently running build
-    # version keeps AppRun's expectations and the bundled runtime in sync.
-    appimage_pin = f"appimage=={importlib.metadata.version('appimage')}"
+    # declares it as a dependency. Defaults to the currently running build's
+    # own version, which keeps AppRun's expectations and the bundled runtime
+    # in sync — but that's an implicit pin, not a value committed to
+    # pyproject.toml; set appimage_version explicitly (`init` does this) so
+    # it doesn't silently vary with whichever appimage.ctl release built it.
+    appimage_version = config.appimage_version or importlib.metadata.version("appimage")
+    appimage_pin = f"appimage=={appimage_version}"
     install_targets = [appimage_pin, base, *config.packages]
 
     sources["build_dir"] = (
@@ -737,12 +786,33 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
 
     verify_downloads = config.verify_downloads or config.reproducible
     require_zsyncmake = config.require_zsyncmake or config.reproducible
+
+    if config.appimagectl_version:
+        running_version = importlib.metadata.version("appimage")
+        if config.appimagectl_version != running_version:
+            mismatch_msg = (
+                f"appimagectl_version expects {config.appimagectl_version}, but "
+                f"{running_version} is actually running — reproducibility may no "
+                "longer hold if this build differs from the one that pinned it. "
+                "Update appimagectl_version once you've confirmed the new version "
+                "still builds the same way, or reinstall the expected version."
+            )
+            (appdir_errors if verify_downloads else appdir_warnings).append(
+                mismatch_msg,
+            )
+
     if config.reproducible:
         if not config.python_dir and not config.python_date:
             appdir_errors.append(
                 "reproducible requires python_date (or python_dir) to be set "
                 "in [tool.appimage] — run 'init' to resolve and write it.",
             )
+        appdir_errors.extend(
+            f"reproducible requires {key} to be set in "
+            "[tool.appimage] — run 'init' to resolve and write it."
+            for key in ("appimage_version", "appimage_sha256")
+            if not getattr(config, key)
+        )
         package_errors.extend(
             f"reproducible requires {key} to be set in "
             "[tool.appimage] — run 'init' to resolve and write it."
@@ -785,6 +855,9 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         install_targets=install_targets,
         local_install_targets=[base],
         appimage_pin=appimage_pin,
+        appimage_version=config.appimage_version,
+        appimage_sha256=config.appimage_sha256,
+        appimagectl_version=config.appimagectl_version,
         python=python,
         python_date=config.python_date,
         icon=icon,
@@ -843,6 +916,9 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         ("python_archive", resolved.python_archive),
         ("python_sha256", resolved.python_sha256),
         ("python_dir", resolved.python_dir),
+        ("appimage_version", resolved.appimage_version),
+        ("appimage_sha256", resolved.appimage_sha256),
+        ("appimagectl_version", resolved.appimagectl_version),
         ("appimagetool", resolved.appimagetool),
         ("appimagetool_version", resolved.appimagetool_version),
         ("appimagetool_sha256", resolved.appimagetool_sha256),
@@ -865,6 +941,7 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
     return rows
 
 
+_RUNTIME_MODULE_REPRODUCIBILITY_PINS: Final = ("appimage_version", "appimage_sha256")
 _PACKAGE_REPRODUCIBILITY_PINS: Final = ("appimagetool_sha256", "runtime_sha256")
 
 
@@ -896,6 +973,27 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
         appdir_line = (
             "AppDir reproducibility: python_date not set — run 'init' to "
             "resolve and pin it, or set python_dir"
+        )
+
+    runtime_module_pinned = [
+        key for key in _RUNTIME_MODULE_REPRODUCIBILITY_PINS if getattr(resolved, key)
+    ]
+    runtime_module_ready = len(runtime_module_pinned) == len(
+        _RUNTIME_MODULE_REPRODUCIBILITY_PINS,
+    )
+    if runtime_module_ready:
+        runtime_module_line = (
+            "Runtime module reproducibility: appimage_version, appimage_sha256 set"
+        )
+    else:
+        missing_runtime = ", ".join(
+            key
+            for key in _RUNTIME_MODULE_REPRODUCIBILITY_PINS
+            if not getattr(resolved, key)
+        )
+        runtime_module_line = (
+            f"Runtime module reproducibility: {missing_runtime} not set — run "
+            "'init' to resolve and pin them"
         )
 
     package_pinned = [
@@ -930,10 +1028,22 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
         "to generate it alongside pylock.toml"
     )
 
-    ready = [appdir_ready, package_ready, pylock_ready, build_pylock_ready]
+    ready = [
+        appdir_ready,
+        runtime_module_ready,
+        package_ready,
+        pylock_ready,
+        build_pylock_ready,
+    ]
     header = f"Reproducibility checklist ({sum(ready)}/{len(ready)} ready):"
     marks = ["✓" if r else "✗" for r in ready]
-    lines = [appdir_line, package_line, pylock_line, build_pylock_line]
+    lines = [
+        appdir_line,
+        runtime_module_line,
+        package_line,
+        pylock_line,
+        build_pylock_line,
+    ]
     return [
         header,
         *(f"  {mark} {line}" for mark, line in zip(marks, lines, strict=True)),
@@ -1084,9 +1194,12 @@ def _pinned_download_fields(
     project_root: Path,
     existing: set[str],
 ) -> dict[str, object]:
-    """Resolve python_date/appimagetool/runtime and return their pin fields to add.
+    """Resolve toolchain pins and return their fields to add.
 
-    Only resolves what isn't already configured; may trigger downloads.
+    Covers python_date/python_sha256, appimage_version/appimage_sha256,
+    appimagetool_version/appimagetool_sha256, runtime_sha256, and
+    appimagectl_version. Only resolves what isn't already configured; may
+    trigger downloads (except appimagectl_version, a local metadata read).
     """
     new: dict[str, object] = {}
     arch = platform.machine()
@@ -1103,6 +1216,13 @@ def _pinned_download_fields(
         if api_sha256 and "python_sha256" not in existing:
             new["python_sha256"] = api_sha256
 
+    if "appimage_version" not in existing and "appimage_sha256" not in existing:
+        version = importlib.metadata.version("appimage")
+        digest = _resolve_appimage_pin_sha256(f"appimage=={version}", strict=False)
+        new["appimage_version"] = version
+        if digest:
+            new["appimage_sha256"] = digest
+
     if "appimagetool_version" not in existing and "appimagetool_sha256" not in existing:
         appimagetool_cache = build_dir / f"appimagetool-{arch}.AppImage"
         tool = _resolve_appimagetool(resolved, appimagetool_cache, arch)
@@ -1113,6 +1233,9 @@ def _pinned_download_fields(
         runtime_cache = build_dir / f"runtime-{arch}"
         runtime = _resolve_runtime_file(resolved, runtime_cache, arch)
         new["runtime_sha256"] = _sha256_file(runtime)
+
+    if "appimagectl_version" not in existing:
+        new["appimagectl_version"] = importlib.metadata.version("appimage")
 
     return new
 
@@ -1175,6 +1298,82 @@ def write_config(config: BuildConfig, project_root: Path) -> None:
     pyproject_path.write_text(content)
     _log.info("")
     _log.info("Added to pyproject.toml:")
+    for k, v in new.items():
+        _log.info("  %s = %s", k, _toml_value(v))
+
+
+def _replace_or_append_toml_fields(pyproject_path: Path, new: dict[str, object]) -> None:
+    """Write *new* key/value pairs into ``[tool.appimage]``, overwriting existing lines.
+
+    The opposite of ``write_config``'s insertion, which only ever adds
+    missing keys and never touches an existing one — this is what
+    ``update_tools`` needs to move pins forward instead of filling gaps.
+    Scoped strictly to the ``[tool.appimage]`` section's own scalar lines,
+    stopping at the next ``[`` header (a subtable like
+    ``[tool.appimage.env]``, or an unrelated table), so a same-named key
+    elsewhere is never touched.
+    """
+    header = "[tool.appimage]"
+    content = pyproject_path.read_text()
+    if header not in content:
+        lines = "\n".join(f"{k} = {_toml_value(v)}" for k, v in new.items())
+        pyproject_path.write_text(content + f"\n{header}\n{lines}\n")
+        return
+
+    start = content.index(header) + len(header)
+    next_header = re.search(r"^\[", content[start:], re.MULTILINE)
+    end = start + next_header.start() if next_header else len(content)
+    section = content[start:end]
+
+    remaining = dict(new)
+
+    def _replace_line(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key in remaining:
+            return f"{key} = {_toml_value(remaining.pop(key))}"
+        return match.group(0)
+
+    section = re.sub(r"^([A-Za-z_][A-Za-z0-9_]*) = .*$", _replace_line, section, flags=re.MULTILINE)
+    if remaining:
+        addition = "\n".join(f"{k} = {_toml_value(v)}" for k, v in remaining.items())
+        section = section.rstrip("\n") + f"\n{addition}\n"
+
+    pyproject_path.write_text(content[:start] + section + content[end:])
+
+
+def update_tools(config: BuildConfig, project_root: Path) -> None:
+    """Move every toolchain pin forward to whatever's currently available.
+
+    Refreshes ``python_date``/``python_sha256``, ``appimage_version``/
+    ``appimage_sha256``, ``appimagetool_version``/``appimagetool_sha256``,
+    ``runtime_sha256``, and ``appimagectl_version`` unconditionally,
+    overwriting whatever's already configured — the same "move pins
+    forward" role ``packaging/update-requirements.sh --upgrade`` plays for
+    this project's own build-backend pin, applied here to appimage.ctl's
+    own toolchain. Never touches ``pylock``/``build_pylock`` (already
+    regenerated on every ``lock`` run regardless of what's configured) or
+    project metadata (``app``/``entry_point``/``icon``/``desktop``) — this
+    is specifically for the pins ``init`` would otherwise leave alone once
+    set once.
+
+    Parameters
+    ----------
+    config : BuildConfig
+        Explicit configuration already loaded from ``pyproject.toml``.
+    project_root : Path
+        Project root directory.
+
+    """
+    resolved = _resolve(config, project_root)
+    _format_check(resolved)
+
+    new = _pinned_download_fields(resolved, project_root, existing=set())
+
+    pyproject_path = project_root / "pyproject.toml"
+    _replace_or_append_toml_fields(pyproject_path, new)
+
+    _log.info("")
+    _log.info("Updated in pyproject.toml:")
     for k, v in new.items():
         _log.info("  %s = %s", k, _toml_value(v))
 
@@ -2233,13 +2432,14 @@ def _install_targets(
     ``_strip_local_directory_entries``). Without it, the rest of
     ``install_targets`` (the local project, ``config.packages``) stays
     unverified as always, but ``appimage_pin``'s exact version is always
-    independently knowable in advance — it's the currently-running
-    ``appimage`` release itself — so it gets the same free
-    auto-verification treatment appimagetool/the runtime file/the Python
-    archive already get, rather than needing a full ``pylock`` opt-in just
-    to protect the one dependency this tool controls end to end.
+    independently knowable in advance — either explicitly via
+    ``appimage_version``, or the currently-running ``appimage.ctl``
+    release itself — so it gets the same free auto-verification treatment
+    appimagetool/the runtime file/the Python archive already get, rather
+    than needing a full ``pylock`` opt-in just to protect the one
+    dependency this tool controls end to end.
     """
-    sha256 = _resolve_appimage_pin_sha256(
+    sha256 = resolved.appimage_sha256 or _resolve_appimage_pin_sha256(
         resolved.appimage_pin,
         strict=resolved.verify_downloads,
     )

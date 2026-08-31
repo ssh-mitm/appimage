@@ -62,6 +62,9 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "python_archive": "",
         "python_sha256": "",
         "python_dir": "",
+        "appimage_version": "",
+        "appimage_sha256": "",
+        "appimagectl_version": "",
         "runtime_file": "",
         "runtime_sha256": "",
         "verify_downloads": False,
@@ -583,7 +586,8 @@ def test_write_config_writes_suggested_update_info(tmp_path: Path) -> None:
          patch("appimage.ctl._resolve_appimagetool", return_value=tool_path), \
          patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
          patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
-         patch("appimage.ctl._sha256_file", return_value="c" * 64):
+         patch("appimage.ctl._sha256_file", return_value="c" * 64), \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value="d" * 64):
         write_config(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
@@ -606,7 +610,8 @@ def test_write_config_does_not_overwrite_existing_update_info(tmp_path: Path) ->
     with patch("appimage.ctl._resolve_appimagetool", return_value=tool_path), \
          patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
          patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
-         patch("appimage.ctl._sha256_file", return_value="c" * 64):
+         patch("appimage.ctl._sha256_file", return_value="c" * 64), \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value="d" * 64):
         write_config(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
@@ -636,6 +641,8 @@ def test_reproducible_passes_when_pins_set(tmp_path: Path) -> None:
     config = BuildConfig(
         reproducible=True,
         python_date="20260211",
+        appimage_version="2.0.1",
+        appimage_sha256=digest_of(b"appimage"),
         appimagetool_sha256=digest_of(b"tool"),
         runtime_sha256=digest_of(b"runtime"),
     )
@@ -654,6 +661,8 @@ def test_reproducible_python_dir_satisfies_appdir_pin(tmp_path: Path) -> None:
     config = BuildConfig(
         reproducible=True,
         python_dir="/opt/python",
+        appimage_version="2.0.1",
+        appimage_sha256=digest_of(b"appimage"),
         appimagetool_sha256=digest_of(b"tool"),
         runtime_sha256=digest_of(b"runtime"),
     )
@@ -671,6 +680,54 @@ def test_python_archive_and_python_dir_together_is_an_error(tmp_path: Path) -> N
     resolved = _resolve(config, tmp_path)
 
     assert any("python_archive" in e and "python_dir" in e for e in resolved.appdir_errors)
+
+
+def test_appimagectl_version_matching_running_version_is_silent(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(appimagectl_version="2.0.1")
+
+    with patch("appimage.ctl.importlib.metadata.version", return_value="2.0.1"):
+        resolved = _resolve(config, tmp_path)
+
+    assert not any("appimagectl_version" in e for e in resolved.appdir_errors)
+    assert not any("appimagectl_version" in w for w in resolved.appdir_warnings)
+
+
+def test_appimagectl_version_mismatch_warns_by_default(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(appimagectl_version="2.0.1")
+
+    with patch("appimage.ctl.importlib.metadata.version", return_value="2.1.0"):
+        resolved = _resolve(config, tmp_path)
+
+    assert resolved.appdir_errors == []
+    assert any(
+        "2.0.1" in w and "2.1.0" in w and "appimagectl_version" in w
+        for w in resolved.appdir_warnings
+    )
+
+
+def test_appimagectl_version_mismatch_errors_under_verify_downloads(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    config = BuildConfig(appimagectl_version="2.0.1", verify_downloads=True)
+
+    with patch("appimage.ctl.importlib.metadata.version", return_value="2.1.0"):
+        resolved = _resolve(config, tmp_path)
+
+    assert any("appimagectl_version" in e for e in resolved.appdir_errors)
+    assert not any("appimagectl_version" in w for w in resolved.appdir_warnings)
+
+
+def test_appimagectl_version_unset_skips_check(tmp_path: Path) -> None:
+    """No expectation recorded means no possible drift — appimage_pin's own,
+    unrelated call to importlib.metadata.version() must not trip this up."""
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert not any("appimagectl_version" in e for e in resolved.appdir_errors)
+    assert not any("appimagectl_version" in w for w in resolved.appdir_warnings)
 
 
 def test_reproducible_false_does_not_require_pins(tmp_path: Path) -> None:
@@ -847,6 +904,25 @@ def test_install_targets_falls_back_to_unverified_without_digest(tmp_path: Path)
     assert "appimage==2.0.1" in args
 
 
+def test_install_targets_uses_configured_appimage_sha256_without_network(tmp_path: Path) -> None:
+    """A configured appimage_sha256 is used as-is, skipping the PyPI lookup."""
+    from appimage.ctl import _install_targets
+
+    resolved = make_resolved(
+        install_targets=["appimage==2.0.1", "."],
+        appimage_sha256="f" * 64,
+    )
+
+    with patch("appimage.ctl._resolve_appimage_pin_sha256") as mock_lookup, \
+         patch("appimage.ctl.subprocess.run") as mock_run:
+        _install_targets(resolved, tmp_path / "python3", tmp_path)
+
+    mock_lookup.assert_not_called()
+    pin_call, main_call = [c.args[0] for c in mock_run.call_args_list]
+    assert "--require-hashes" in pin_call
+    assert "appimage==2.0.1" not in main_call
+
+
 # ---------------------------------------------------------------------------
 # _prepare_python / _compile_pyc
 # ---------------------------------------------------------------------------
@@ -982,6 +1058,7 @@ def test_build_appdir_ignores_missing_package_pins_under_reproducible(tmp_path: 
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
         '[tool.appimage]\nreproducible = true\npython_date = "20260211"\n'
+        'appimage_version = "2.0.1"\nappimage_sha256 = "' + "a" * 64 + '"\n'
     )
     config = build_module.BuildConfig.from_pyproject(tmp_path)
 
@@ -1061,11 +1138,37 @@ def test_write_config_pins_appimagetool_when_unset(tmp_path: Path) -> None:
          patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path) as mock_resolve_runtime, \
          patch("appimage.ctl._appimagetool_version_string", return_value="continuous build (commit abc), build 1"), \
          patch("appimage.ctl._sha256_file", return_value="c" * 64), \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value="d" * 64), \
          patch("appimage.ctl._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
         write_config(config, tmp_path)
 
     mock_resolve_tool.assert_called_once()
     mock_resolve_runtime.assert_called_once()
+
+
+def test_write_config_pins_appimage_runtime_module_when_unset(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        '[tool.appimage]\napp = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
+    )
+    from appimage.ctl import BuildConfig
+
+    config = BuildConfig.from_pyproject(tmp_path)
+
+    with patch("appimage.ctl.importlib.metadata.version", return_value="2.0.1"), \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value="d" * 64) as mock_lookup, \
+         patch("appimage.ctl._resolve_appimagetool", return_value=tmp_path / "appimagetool"), \
+         patch("appimage.ctl._resolve_runtime_file", return_value=tmp_path / "runtime-x86_64"), \
+         patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
+         patch("appimage.ctl._sha256_file", return_value="c" * 64), \
+         patch("appimage.ctl._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
+        write_config(config, tmp_path)
+
+    mock_lookup.assert_called_once_with("appimage==2.0.1", strict=False)
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert 'appimage_version = "2.0.1"' in content
+    assert f'appimage_sha256 = "{"d" * 64}"' in content
+    assert 'appimagectl_version = "2.0.1"' in content
     content = (tmp_path / "pyproject.toml").read_text()
     assert "appimagetool_sha256" in content
     assert "c" * 64 in content
@@ -1089,7 +1192,8 @@ def test_write_config_pins_python_date_when_unset(tmp_path: Path) -> None:
          patch("appimage.ctl._resolve_appimagetool", return_value=tool_path), \
          patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
          patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
-         patch("appimage.ctl._sha256_file", return_value="c" * 64):
+         patch("appimage.ctl._sha256_file", return_value="c" * 64), \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value="d" * 64):
         write_config(config, tmp_path)
 
     mock_resolve_python.assert_called_once()
@@ -1105,6 +1209,8 @@ def test_write_config_skips_appimagetool_resolution_when_already_set(tmp_path: P
         'app = "myapp"\nentry_point = "myapp"\npython = "3.11"\npython_date = "20260101"\n'
         'appimagetool_sha256 = "deadbeef"\n'
         'runtime_sha256 = "deadbeef"\n'
+        'appimage_version = "2.0.1"\n'
+        'appimage_sha256 = "deadbeef"\n'
     )
     from appimage.ctl import BuildConfig
 
@@ -1112,11 +1218,13 @@ def test_write_config_skips_appimagetool_resolution_when_already_set(tmp_path: P
 
     with patch("appimage.ctl._resolve_appimagetool") as mock_resolve_tool, \
          patch("appimage.ctl._resolve_runtime_file") as mock_resolve_runtime, \
+         patch("appimage.ctl._resolve_appimage_pin_sha256") as mock_resolve_appimage_pin, \
          patch("appimage.ctl._resolve_python_url") as mock_resolve_python:
         write_config(config, tmp_path)
 
     mock_resolve_tool.assert_not_called()
     mock_resolve_runtime.assert_not_called()
+    mock_resolve_appimage_pin.assert_not_called()
     mock_resolve_python.assert_not_called()
 
 
@@ -1143,7 +1251,8 @@ def test_write_config_does_not_write_unresolvable_entry_point(tmp_path: Path) ->
          patch("appimage.ctl._resolve_runtime_file", return_value=runtime_path), \
          patch("appimage.ctl._appimagetool_version_string", return_value="continuous build"), \
          patch("appimage.ctl._sha256_file", return_value="c" * 64), \
-         patch("appimage.ctl._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
+         patch("appimage.ctl._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")), \
+         patch("appimage.ctl._resolve_appimage_pin_sha256", return_value="d" * 64):
         write_config(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
@@ -1239,6 +1348,9 @@ def test_reproducibility_summary_reports_not_ready_by_default() -> None:
     lines = _reproducibility_summary(resolved)
 
     assert any("AppDir reproducibility: python_date not set" in line for line in lines)
+    assert any(
+        "Runtime module reproducibility:" in line and "not set" in line for line in lines
+    )
     assert any("Packaging reproducibility:" in line and "not set" in line for line in lines)
     assert any("'init'" in line for line in lines)
     assert any("Dependency verification: pylock not set" in line for line in lines)
@@ -1251,6 +1363,8 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
 
     resolved = make_resolved(
         python_date="20260211",
+        appimage_version="2.0.1",
+        appimage_sha256="c" * 64,
         appimagetool_sha256="a" * 64,
         runtime_sha256="b" * 64,
         pylock="pylock.toml",
@@ -1260,6 +1374,10 @@ def test_reproducibility_summary_reports_full_pins_without_nudge() -> None:
     lines = _reproducibility_summary(resolved)
 
     assert any("AppDir reproducibility: python_date set" in line for line in lines)
+    assert any(
+        "Runtime module reproducibility: appimage_version, appimage_sha256 set" in line
+        for line in lines
+    )
     assert any(
         "Packaging reproducibility: appimagetool_sha256, runtime_sha256 set" in line
         for line in lines
@@ -1289,18 +1407,20 @@ def test_reproducibility_summary_header_counts_ready_layers() -> None:
     from appimage.ctl import _reproducibility_summary
 
     lines = _reproducibility_summary(make_resolved())
-    assert lines[0] == "Reproducibility checklist (0/4 ready):"
+    assert lines[0] == "Reproducibility checklist (0/5 ready):"
 
     lines = _reproducibility_summary(
         make_resolved(
             python_date="20260211",
+            appimage_version="2.0.1",
+            appimage_sha256="c" * 64,
             appimagetool_sha256="a" * 64,
             runtime_sha256="b" * 64,
             pylock="pylock.toml",
             build_pylock="requirements-build.txt",
         )
     )
-    assert lines[0] == "Reproducibility checklist (4/4 ready):"
+    assert lines[0] == "Reproducibility checklist (5/5 ready):"
 
 
 def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
@@ -1309,6 +1429,8 @@ def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
     lines = _reproducibility_summary(
         make_resolved(
             python_date="20260211",
+            appimage_version="2.0.1",
+            appimage_sha256="c" * 64,
             appimagetool_sha256="a" * 64,
             runtime_sha256="b" * 64,
             pylock="pylock.toml",
@@ -1317,6 +1439,10 @@ def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
 
     assert any(
         line.strip().startswith("✓") and "AppDir reproducibility:" in line for line in lines
+    )
+    assert any(
+        line.strip().startswith("✓") and "Runtime module reproducibility:" in line
+        for line in lines
     )
     assert any(
         line.strip().startswith("✓") and "Packaging reproducibility:" in line for line in lines

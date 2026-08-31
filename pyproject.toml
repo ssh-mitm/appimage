@@ -120,7 +120,8 @@ disable = [
 [tool.pylint.design]
 max-args = 7
 max-positional-arguments = 7
-max-locals = 30
+max-locals = 32
+max-statements = 60
 max-module-lines = 2900
 
 [tool.pylint.MASTER]
@@ -136,6 +137,7 @@ ignore = [
 
 [tool.ruff.lint.pylint]
 max-args = 7
+max-statements = 60
 
 [tool.ruff.lint.flake8-copyright]
 author = "SSH-MITM Dev-Team"
