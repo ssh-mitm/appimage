@@ -122,7 +122,7 @@ max-args = 7
 max-positional-arguments = 7
 max-locals = 32
 max-statements = 60
-max-module-lines = 2900
+max-module-lines = 1000
 
 [tool.pylint.MASTER]
 load-plugins = "pylint.extensions.docparams"
