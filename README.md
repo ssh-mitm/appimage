@@ -5,7 +5,7 @@
 <h1 align="center">appimage</h1>
 
 <p align="center">
-  <strong>Package Python applications as self-contained AppImages.</strong>
+  <strong>Zero-setup, reproducible builds.</strong>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 `appimage` bundles a complete Python distribution together with your application and all its dependencies into a single executable file.
 
-- **Same Python as uv**: the bundled interpreter comes from [python-build-standalone](https://github.com/astral-sh/python-build-standalone), the same builds `uv python install` uses — what you develop and test with locally is what ships in the AppImage
+- **Same Python as uv**: the bundled interpreter comes from [python-build-standalone](https://github.com/astral-sh/python-build-standalone), the same builds `uv python install` uses - what you develop and test with locally is what ships in the AppImage
 - **Reproducible builds**: two independent builds of the same project produce a byte-for-byte identical `.AppImage`, no configuration needed ([details below](#reproducible-builds))
 
 
@@ -51,7 +51,7 @@ python -m appimage.ctl init
 
 ## Reproducible builds
 
-Covers bytecode compilation, file timestamps, and the `appimagetool` binary itself — `appimage` defaults to the [maintained successor](https://github.com/AppImage/appimagetool) of the classic tool, whose bundled `mksquashfs` has a [documented non-deterministic compression bug](https://github.com/AppImage/AppImageKit/issues/929).
+Covers bytecode compilation, file timestamps, and the `appimagetool` binary itself - `appimage` defaults to the [maintained successor](https://github.com/AppImage/appimagetool) of the classic tool, whose bundled `mksquashfs` has a [documented non-deterministic compression bug](https://github.com/AppImage/AppImageKit/issues/929).
 
 To guarantee this across machines and over time too, with every dependency hash-verified:
 

@@ -57,7 +57,7 @@ When invoked through a virtual environment symlink, the `appimage` module automa
 | `--prompt PROMPT` | Set an alternative shell prompt prefix for the environment. |
 | `--without-scm-ignore-files` | Skip creating `.gitignore` in the venv (Python ≥ 3.13 only). |
 
-> **Note:** `--system-site-packages` has no effect — the AppImage's bundled packages are always accessible regardless, because Python finds them via its compiled-in `sys.prefix` (`APPDIR/python/`), not through the venv's `pyvenv.cfg`. `--copies`, `--upgrade-deps`, `--without-pip`, and `--symlinks` are also not supported.
+> **Note:** `--system-site-packages` has no effect - the AppImage's bundled packages are always accessible regardless, because Python finds them via its compiled-in `sys.prefix` (`APPDIR/python/`), not through the venv's `pyvenv.cfg`. `--copies`, `--upgrade-deps`, `--without-pip`, and `--symlinks` are also not supported.
 
 ## Extracted AppImages (no FUSE)
 

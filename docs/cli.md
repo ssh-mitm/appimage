@@ -5,12 +5,12 @@ python -m appimage.ctl [COMMAND] [OPTIONS]
 appimagectl [COMMAND] [OPTIONS]
 ```
 
-`python -m appimage.ctl` is the recommended form — same reasoning as
+`python -m appimage.ctl` is the recommended form - same reasoning as
 `python -m pip` over a bare `pip`: it's always the interpreter you meant,
 not whatever `appimagectl` happens to be first on `PATH`. The console
 script is installed alongside it and behaves identically.
 
-`COMMAND` defaults to building the AppImage when omitted — `appimagectl`
+`COMMAND` defaults to building the AppImage when omitted - `appimagectl`
 on its own, with no configuration required, already builds. The other
 commands (`check`, `init`, `lock`, `enable-reproducible`) are each a
 distinct, mutually exclusive action.
@@ -22,9 +22,9 @@ distinct, mutually exclusive action.
 | *(none)* | Build the AppImage. |
 | `check` | Show detected build configuration and exit without building. |
 | `init` | Write auto-detected values to `[tool.appimage]` in `pyproject.toml` (only missing keys) and exit. Resolves the latest python-build-standalone release to write `python_date`/`python_sha256` (a lightweight API call, no download), and resolves appimagetool and the runtime file (possibly downloading them, ~8 MB + ~1 MB) to write `appimagetool_version`/`appimagetool_sha256`/`runtime_sha256`, whichever of these aren't already set. |
-| `lock` | Generate hash-pinned lock files and exit — a thin wrapper around `pip lock`, run through the bundled interpreter (see [Verified dependencies](reproducible-builds.md#verified-dependencies)). Generates `pylock.toml` for third-party dependencies *and* a build-backend lock file for the packaged project's own `[build-system].requires` in the same run, writing `pylock`/`build_pylock` to `pyproject.toml` for whichever isn't already set. |
-| `enable-reproducible` | One-command onboarding: runs `init` then `lock`, then a real build with `reproducible` enforced — and only once that build succeeds, writes `reproducible = true` to `pyproject.toml`. See [Getting to full reproducibility](reproducible-builds.md#getting-to-full-reproducibility). |
-| `build-appdir` | Assemble the AppDir — install Python and packages, copy assets/extra files, run hooks, compile bytecode, scrub build-machine paths — without resolving appimagetool/the runtime stub or packaging into an `.AppImage`. The result is a complete, runnable installation tree usable for testing or deploying some other way. Only enforces the AppDir-side reproducibility pin (`python_date`/`python_dir`), not `appimagetool_sha256`/`runtime_sha256` — those are irrelevant here since packaging never runs. |
+| `lock` | Generate hash-pinned lock files and exit - a thin wrapper around `pip lock`, run through the bundled interpreter (see [Verified dependencies](reproducible-builds.md#verified-dependencies)). Generates `pylock.toml` for third-party dependencies *and* a build-backend lock file for the packaged project's own `[build-system].requires` in the same run, writing `pylock`/`build_pylock` to `pyproject.toml` for whichever isn't already set. |
+| `enable-reproducible` | One-command onboarding: runs `init` then `lock`, then a real build with `reproducible` enforced - and only once that build succeeds, writes `reproducible = true` to `pyproject.toml`. See [Getting to full reproducibility](reproducible-builds.md#getting-to-full-reproducibility). |
+| `build-appdir` | Assemble the AppDir - install Python and packages, copy assets/extra files, run hooks, compile bytecode, scrub build-machine paths - without resolving appimagetool/the runtime stub or packaging into an `.AppImage`. The result is a complete, runnable installation tree usable for testing or deploying some other way. Only enforces the AppDir-side reproducibility pin (`python_date`/`python_dir`), not `appimagetool_sha256`/`runtime_sha256` - those are irrelevant here since packaging never runs. |
 
 ## Options
 
@@ -40,7 +40,7 @@ one applies):
 | `--extras EXTRA` | Override extras to install (e.g. `production`). May be repeated. |
 | `--package TARGET` | Additional pip install target. May be repeated. |
 | `--project-dir PATH` | Path to the project root (default: current directory). |
-| `--appimagetool PATH` | Path to a local appimagetool binary. Skips the build cache and download — `PATH` itself is never searched, see [Classic appimagetool detected](reproducible-builds.md#classic-appimagetool-detected). |
+| `--appimagetool PATH` | Path to a local appimagetool binary. Skips the build cache and download - `PATH` itself is never searched, see [Classic appimagetool detected](reproducible-builds.md#classic-appimagetool-detected). |
 | `--appimagetool-version LABEL` | Informational label for the pinned appimagetool build. |
 | `--appimagetool-sha256 SHA256` | Expected sha256 of the appimagetool binary, verified regardless of how it was resolved. |
 | `--python-archive PATH` | Path to a local python-build-standalone tarball. Skips the download. |
@@ -48,13 +48,13 @@ one applies):
 | `--runtime-file PATH` | Path to a local AppImage runtime ELF stub, passed to appimagetool as `--runtime-file`. Skips the download. |
 | `--runtime-sha256 SHA256` | Expected sha256 of the runtime file, verified regardless of how it was resolved. |
 | `--verify-downloads` | Abort the build instead of warning whenever appimagetool, the runtime file, or the Python archive would otherwise be used unverified. |
-| `--require-zsyncmake` | Abort the build instead of warning when `update_info` is set but appimagetool didn't produce a `.zsync` file (checked after packaging, against the real output — see [Configuration](configuration.md#build-options)). |
+| `--require-zsyncmake` | Abort the build instead of warning when `update_info` is set but appimagetool didn't produce a `.zsync` file (checked after packaging, against the real output - see [Configuration](configuration.md#build-options)). |
 | `--pylock PATH` | Path to a hash-pinned `pylock.toml` for third-party dependencies. Generate it with `lock`. |
 | `--require-pylock` | Abort the build instead of warning when `pylock` is not set. |
-| `--build-pylock PATH` | Path to a hash-pinned pylock-format file constraining the packaged project's own `[build-system].requires`, so pip's isolated build environment for it is hash-verified too. Generate it with `lock`, alongside `pylock.toml` — see [Verified build backend](reproducible-builds.md#verified-build-backend). |
+| `--build-pylock PATH` | Path to a hash-pinned pylock-format file constraining the packaged project's own `[build-system].requires`, so pip's isolated build environment for it is hash-verified too. Generate it with `lock`, alongside `pylock.toml` - see [Verified build backend](reproducible-builds.md#verified-build-backend). |
 | `--require-build-pylock` | Abort the build instead of warning when `build_pylock` is not set. |
-| `--uploaded-prior-to PnD` | Only meaningful on `lock`/`enable-reproducible`: passed through to `pip lock --uploaded-prior-to` as a cooldown window (e.g. `P7D` excludes packages published in the last 7 days) — gives the community time to catch a compromised release before it gets locked in. Applies to both lock files generated. |
-| `--reproducible` | Enforce a build that's reproducible across machines and over time: implies `--verify-downloads` and `--require-zsyncmake`, and requires `python_date`/`appimagetool_sha256`/`runtime_sha256` to already be set (run `init` first). Does not resolve or write any values itself — for that, see `enable-reproducible` above. Independent of `--pylock`/`--require-pylock`/`--build-pylock`/`--require-build-pylock` — opt into dependency and build-backend hash-pinning separately. |
+| `--uploaded-prior-to PnD` | Only meaningful on `lock`/`enable-reproducible`: passed through to `pip lock --uploaded-prior-to` as a cooldown window (e.g. `P7D` excludes packages published in the last 7 days) - gives the community time to catch a compromised release before it gets locked in. Applies to both lock files generated. |
+| `--reproducible` | Enforce a build that's reproducible across machines and over time: implies `--verify-downloads` and `--require-zsyncmake`, and requires `python_date`/`appimagetool_sha256`/`runtime_sha256` to already be set (run `init` first). Does not resolve or write any values itself - for that, see `enable-reproducible` above. Independent of `--pylock`/`--require-pylock`/`--build-pylock`/`--require-build-pylock` - opt into dependency and build-backend hash-pinning separately. |
 
 ## Examples
 
@@ -109,7 +109,7 @@ python -m appimage.ctl --require-pylock --require-build-pylock
 # Regenerate both locks with a 7-day cooldown, excluding just-published releases
 python -m appimage.ctl lock --uploaded-prior-to P7D
 
-# Just assemble the AppDir — for testing, or deploying without packaging
+# Just assemble the AppDir - for testing, or deploying without packaging
 # into a single-file .AppImage. Never touches appimagetool/the runtime stub.
 python -m appimage.ctl build-appdir
 ```

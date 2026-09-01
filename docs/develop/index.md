@@ -1,6 +1,6 @@
 # Development
 
-How to work on `appimage` itself — set up an environment, run the checks,
+How to work on `appimage` itself - set up an environment, run the checks,
 and build an actual AppImage from source to confirm a change works.
 
 ## Environment setup
@@ -22,7 +22,7 @@ hatch run lint:check   # pytest + black + bandit + ruff + flake8 + pylint + mypy
 ```
 
 `lint:check` is what CI runs (`hatch run +py=<version> lint:check` across
-the Python 3.11–3.14 matrix) — a change isn't done until this passes.
+the Python 3.11–3.14 matrix) - a change isn't done until this passes.
 
 ## Building an AppImage from source
 
@@ -36,7 +36,7 @@ hatch run appimagectl --project-dir examples/myapp
 ```
 
 `hatch run appimagectl` runs the `appimagectl` console script from
-inside the `lint`/`test` env, which has your checkout installed — so it
+inside the `lint`/`test` env, which has your checkout installed - so it
 picks up local changes to `appimage/ctl/` immediately, no reinstall step
 needed. If you only need to see what would be built without actually
 packaging anything, use `check` instead.
@@ -54,7 +54,7 @@ hatch run appimagectl --project-dir examples/myapp
 sha256sum /tmp/build-a.AppImage examples/myapp/dist/myapp-x86_64.AppImage
 ```
 
-Matching hashes confirm the change didn't introduce new non-determinism —
+Matching hashes confirm the change didn't introduce new non-determinism -
 see [Reproducible builds](../reproducible-builds.md) for what this
 actually guarantees and why it's non-trivial for AppImages specifically.
 
@@ -67,8 +67,8 @@ hatch run docs:build   # sphinx-build docs build/html
 ## This package's own PyPI wheel
 
 Development environment and AppImage-output reproducibility above cover
-working on the *tool*. The tool's own release artifact — the wheel
-published to PyPI — has a separate, narrower reproducibility story:
+working on the *tool*. The tool's own release artifact - the wheel
+published to PyPI - has a separate, narrower reproducibility story:
 
 ```{toctree}
 :maxdepth: 1

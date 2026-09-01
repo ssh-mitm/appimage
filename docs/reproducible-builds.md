@@ -1,7 +1,7 @@
 # Reproducible Builds
 
-Two independent builds of the same project — run at different times, with
-nothing pinned — produce a **byte-for-byte identical** `.AppImage` file:
+Two independent builds of the same project - run at different times, with
+nothing pinned - produce a **byte-for-byte identical** `.AppImage` file:
 
 ```bash
 $ sha256sum dist/myapp-x86_64.AppImage
@@ -11,13 +11,13 @@ $ sha256sum dist/myapp-x86_64.AppImage
 db8b648c9ddcc50773b740219d3ecb4910b6bf3b18907b566f2eb1b624a79e35  dist/myapp-x86_64.AppImage
 ```
 
-No configuration required — this is the default behavior. As far as we're
+No configuration required - this is the default behavior. As far as we're
 aware, no other Python-to-AppImage packaging tool makes this claim, let
 alone verifies it.
 
 ## Getting to full reproducibility
 
-The guarantee above — same input, same bytes, on one machine, right now —
+The guarantee above - same input, same bytes, on one machine, right now -
 needs no configuration. Two further layers are opt-in on top of it, each
 closing a different gap, each independent of the other: pinning the
 toolchain and hash-pinning every dependency, and turning on the umbrella
@@ -30,11 +30,11 @@ python -m appimage.ctl enable-reproducible
 ```
 
 Pins the toolchain (`python_date`, `appimagetool_sha256`, `runtime_sha256`
-— same as `init`), generates both `pylock.toml` and the build-backend lock
+- same as `init`), generates both `pylock.toml` and the build-backend lock
 file (same as `lock`), then runs a real build against those pins to prove
-they actually work together — and only once that build succeeds, writes
+they actually work together - and only once that build succeeds, writes
 `reproducible = true` to `pyproject.toml`. Never flips the flag as a side
-effect of merely resolving or locking values — see [The umbrella
+effect of merely resolving or locking values - see [The umbrella
 flag](#the-umbrella-flag) for why that distinction matters.
 
 ### Piecewise, if you want more control
@@ -62,12 +62,12 @@ reproducible = true
 ```
 
 Written automatically by `enable-reproducible` once a build has actually
-succeeded with the pins from `init`/`lock` — or set it by hand after
+succeeded with the pins from `init`/`lock` - or set it by hand after
 verifying a build yourself, if you went the piecewise route. `init`/`lock`
 never flip it themselves: it turns a missing pin into a hard build
 failure, and that should follow a build that's proven to work, not just
 the act of writing the pins. Refuses to build unless the toolchain pins
-are already set — see [Pinning for cross-machine
+are already set - see [Pinning for cross-machine
 reproducibility](#pinning-for-cross-machine-reproducibility).
 
 `python -m appimage.ctl check` reports where a project stands at any
@@ -78,11 +78,11 @@ Reproducibility checklist (3/5 ready):
   ✓ AppDir reproducibility: python_date set
   ✓ Runtime module reproducibility: appimage_version, appimage_sha256 set
   ✓ Packaging reproducibility: appimagetool_sha256, runtime_sha256 set
-  ✗ Dependency verification: pylock not set — run 'lock' to generate pylock.toml
-  ✗ Build backend verification: build_pylock not set — run 'lock' to generate it alongside pylock.toml
+  ✗ Dependency verification: pylock not set - run 'lock' to generate pylock.toml
+  ✗ Build backend verification: build_pylock not set - run 'lock' to generate it alongside pylock.toml
 ```
 
-Neither layer is required for the byte-identical guarantee itself — they
+Neither layer is required for the byte-identical guarantee itself - they
 exist for projects that also need cross-machine/over-time reproducibility
 and supply-chain verification, and each can be adopted alone.
 
@@ -90,7 +90,7 @@ and supply-chain verification, and each can be adopted alone.
 
 An AppImage is an ELF runtime with a SquashFS image appended. Getting a
 byte-identical result out of that pipeline turned out to need six
-independent fixes — any one missing was enough to make two builds differ,
+independent fixes - any one missing was enough to make two builds differ,
 even with everything else already correct:
 
 1. **Bytecode.** `pip install`'s default `.pyc` cache embeds the
@@ -109,7 +109,7 @@ even with everything else already correct:
    immediately before packaging.
 3. **The packer itself.** The classic `AppImageKit` `appimagetool` bundles
    a `mksquashfs` with a genuine, documented non-deterministic
-   multi-threaded compression bug — two packaging runs of the *identical*
+   multi-threaded compression bug - two packaging runs of the *identical*
    input directory produce different bytes once the tree passes roughly
    50–100 files (see [AppImageKit
    #929](https://github.com/AppImage/AppImageKit/issues/929)). No amount
@@ -123,15 +123,15 @@ even with everything else already correct:
    appimagetool's *own* process environment too, not just applied to the
    AppDir beforehand.
 5. **The runtime stub.** Newer appimagetool releases fetch the AppImage
-   runtime ELF stub live, over the network, at packaging time — a source
+   runtime ELF stub live, over the network, at packaging time - a source
    of both non-determinism and an unverified download. `appimage.ctl`
    pre-fetches and pins it instead, then hands it to appimagetool via
    `--runtime-file` so no live download happens.
 6. **The build machine's own absolute path.** Compiled bytecode, stray
    stdlib `.pyc` files, and pip's own install-time bookkeeping
    (`direct_url.json`, console-script shims) all bake the build
-   directory's absolute path — and via `$HOME`, typically the building
-   user's own name — into files that ship inside the AppImage. That's
+   directory's absolute path - and via `$HOME`, typically the building
+   user's own name - into files that ship inside the AppImage. That's
    enough to make two builds of identical source differ if run from
    different checkout locations, e.g. two developers' home directories or
    two CI providers. Fixed by compiling with `-s <site-packages>` to
@@ -139,7 +139,7 @@ even with everything else already correct:
    every subprocess so nothing compiles outside that controlled step, and
    scrubbing pip's two artifacts: `direct_url.json` is deleted (it only
    records *where this came from*, meaningless once the AppDir runs
-   somewhere else), while console-script shims are relocated in place —
+   somewhere else), while console-script shims are relocated in place -
    shebang rewritten to find the bundled interpreter relative to their
    own location, so `AppDir/python/bin/<entry-point>` keeps working for
    anyone using the AppDir directly (see [internals.md](internals.md) for
@@ -154,36 +154,36 @@ full mechanism-level detail behind each fix.
 ## Classic appimagetool detected
 
 appimagetool is resolved from an explicit `appimagetool` config path,
-then the build cache, then a fresh download — `PATH` is never searched
+then the build cache, then a fresh download - `PATH` is never searched
 (see ["The packer itself" above](#why-this-is-hard), item 3).
 
 **This is the exception, not the rule.** A project that never sets
 `appimagetool` always takes the download branch: a verified fetch of the
 current [`AppImage/appimagetool`](https://github.com/AppImage/appimagetool)
 default, cached for next time. That cached copy stays safe on every later
-build too — nothing but this project's own download step ever writes to
+build too - nothing but this project's own download step ever writes to
 it. The check below exists for the two remaining ways a *different*
 binary can still end up in use:
 
 - An `appimagetool` path set explicitly in `[tool.appimage]`, typically
-  for an offline/air-gapped build (see below) — worth double-checking
+  for an offline/air-gapped build (see below) - worth double-checking
   it's actually an `AppImage/appimagetool` build, not a copy of the
   classic one grabbed years ago.
 - A build cache seeded by hand rather than by `appimage.ctl`'s own
   download step.
 
 Pinning `appimagetool_sha256` doesn't catch either case: it only proves
-the same file is used every time, not that it's the *right* file — the
+the same file is used every time, not that it's the *right* file - the
 classic build's non-deterministic `mksquashfs` (see item 3) still
 produces a different `.AppImage` on every run, just with a build that
 "successfully" verifies its own hash each time. So the build aborts
 instead of just warning when the resolved binary looks like the classic
-build — based on debug-info strings from its own source tree still
+build - based on debug-info strings from its own source tree still
 present in the binary, or, if those were stripped, its `--version`
 banner's wording. Neither signal is airtight alone, which is why a match
 aborts rather than being silently trusted.
 
-**Fix — network available (the common case):** stop pointing at the
+**Fix - network available (the common case):** stop pointing at the
 classic build and let `appimage.ctl` fetch the right one itself.
 
 - If `appimagetool` is set explicitly in `[tool.appimage]`, either unset
@@ -196,9 +196,9 @@ classic build and let `appimage.ctl` fetch the right one itself.
 Then rerun `init` (or just the build) to re-resolve and re-pin
 `appimagetool_sha256` against the correct binary.
 
-**Fix — offline/air-gapped:** download the right asset yourself from
+**Fix - offline/air-gapped:** download the right asset yourself from
 [the `AppImage/appimagetool` releases page](https://github.com/AppImage/appimagetool/releases)
-— the `continuous` release's `appimagetool-<arch>.AppImage` (`<arch>` is
+- the `continuous` release's `appimagetool-<arch>.AppImage` (`<arch>` is
 `x86_64`, `aarch64`, or `armhf`; the GitHub API's own published sha256 for
 that asset is what a networked build would auto-verify against). Then
 either:
@@ -209,7 +209,7 @@ either:
   explicitly.
 
 Either way, also set `appimagetool_sha256` to that asset's published
-digest so it's verified rather than merely trusted — `check` prints a
+digest so it's verified rather than merely trusted - `check` prints a
 warning naming the actual hash it resolved if this is left unset.
 
 ## Zsync and the build host PATH
@@ -217,7 +217,7 @@ warning naming the actual hash it resolved if this is left unset.
 `update_info`/`require_zsyncmake` used to work like this: before packaging,
 check whether `zsyncmake` is on the *build host's* `PATH`; warn (or, under
 `require_zsyncmake`, abort) if it isn't. That check was wrong, in the same
-way — and for the same underlying reason — as [the classic appimagetool
+way - and for the same underlying reason - as [the classic appimagetool
 detection above](#classic-appimagetool-detected): it asked about the
 *host's* `PATH`, when what actually determines whether a `.zsync` file
 gets produced is entirely internal to appimagetool itself.
@@ -230,18 +230,18 @@ export PATH="$this_dir"/usr/bin:"$PATH"
 exec "$this_dir"/usr/bin/appimagetool "$@"
 ```
 
-— it bundles its own `zsyncmake` right next to `mksquashfs` in its own
+- it bundles its own `zsyncmake` right next to `mksquashfs` in its own
 `usr/bin`, and puts that directory *first* on `PATH` before running the
 real binary. appimagetool's own C source then does a plain PATH lookup
 (`g_find_program_in_path("zsyncmake")`) to decide whether to generate a
-`.zsync` file — which, because of the `AppRun` above, finds appimagetool's
+`.zsync` file - which, because of the `AppRun` above, finds appimagetool's
 *own* bundled copy first, regardless of whether the build host has
 `zsyncmake` installed separately or not. Confirmed by hand: extracting and
 running the bundled `usr/bin/zsyncmake` directly, on a host with no system
 `zsyncmake` at all, produces a valid `.zsync` file with no network access
 and no dependency on anything outside the appimagetool download itself.
 
-So `.zsync` generation was already self-contained and host-independent —
+So `.zsync` generation was already self-contained and host-independent -
 the old PATH check just asked the wrong question and produced a
 false warning (or, under `require_zsyncmake`/`--reproducible`, a false
 *abort*) on any build host that didn't happen to have a *separate* system
@@ -251,7 +251,7 @@ real, deterministic outcome instead: after packaging, whether
 `<dist_dir>/<app>-<arch>.AppImage.zsync` actually exists. The only way
 this still fails is a genuinely unusual `appimagetool` (a hand-built copy
 without a bundled `zsyncmake`, explicitly configured via `appimagetool` in
-`[tool.appimage]`) — not the build host's own installed packages.
+`[tool.appimage]`) - not the build host's own installed packages.
 
 ## Verify it yourself
 
@@ -265,13 +265,13 @@ sha256sum /tmp/build-a.AppImage dist/myapp-x86_64.AppImage
 
 Matching hashes prove it for your project on your machine. To prove it
 *across* machines or over time, the appimagetool/runtime binaries and the
-bundled Python release also need to be pinned — see below.
+bundled Python release also need to be pinned - see below.
 
 ## Pinning for cross-machine reproducibility
 
 Fixes 1, 2, and 4 above are fully automatic and need no configuration.
 Fix 3 (which appimagetool binary gets used), fix 5 (which runtime binary),
-and the Python release are all rolling/latest-by-default — reproducible
+and the Python release are all rolling/latest-by-default - reproducible
 *within* a build environment, but not guaranteed to still match what
 another machine, or the same machine next month, resolves, unless pinned
 explicitly:
@@ -285,11 +285,11 @@ runtime_sha256 = "1cc49bc..."
 
 Run `python -m appimage.ctl init` to resolve whatever's currently
 available (downloading appimagetool and the runtime file if needed) and
-write both hashes — plus a human-readable `appimagetool_version` label —
+write both hashes - plus a human-readable `appimagetool_version` label -
 into `pyproject.toml` automatically.
 
-Without a pin, appimagetool and the runtime file are still used — whatever
-currently resolves — and a warning logs the actual hash so it can be
+Without a pin, appimagetool and the runtime file are still used - whatever
+currently resolves - and a warning logs the actual hash so it can be
 copied into config later. Set `verify_downloads = true` to make an
 unverified resolution a hard error instead of a warning, for release
 builds where "give me the exact bits I asked for, or fail" matters more
@@ -299,14 +299,14 @@ Run `python -m appimage.ctl --reproducible` (after `init` has written
 the pins) as a shortcut that enforces all of the above at once: it implies
 `verify_downloads` and `require_zsyncmake` (see
 [configuration.md](configuration.md)), and refuses to build at all if
-`python_date`, `appimagetool_sha256`, or `runtime_sha256` is still unset —
+`python_date`, `appimagetool_sha256`, or `runtime_sha256` is still unset -
 since resolving any of those three fresh on every build is exactly what
 defeats cross-machine reproducibility in the first place.
 
 ### AppDir-only builds need fewer pins
 
-`build-appdir` assembles the AppDir — installing Python and packages,
-copying assets, compiling bytecode, scrubbing build-machine paths — and
+`build-appdir` assembles the AppDir - installing Python and packages,
+copying assets, compiling bytecode, scrubbing build-machine paths - and
 stops there, without ever resolving appimagetool or the runtime stub:
 
 ```sh
@@ -316,7 +316,7 @@ python -m appimage.ctl build-appdir
 Useful on its own: the result is a complete, runnable installation tree
 that can be tested, inspected, or deployed some other way, without ever
 producing a single-file `.AppImage`. Because of that, `reproducible`
-only requires `python_date` (or `python_dir`, below) for this command —
+only requires `python_date` (or `python_dir`, below) for this command -
 `appimagetool_sha256`/`runtime_sha256` are irrelevant to something that
 never touches appimagetool. `check` reports the two halves as separate
 checklist lines, "AppDir reproducibility" and "Packaging reproducibility",
@@ -331,7 +331,7 @@ python_dir = "/opt/verified-python"
 ```
 
 An alternative to `python_archive` for a Python distribution that's
-already unpacked on disk — copied into `AppDir/python` as-is, instead of
+already unpacked on disk - copied into `AppDir/python` as-is, instead of
 extracting a tarball. Config-only, deliberately with no CLI flag: setting
 it is meant to be a considered, committed-to-`pyproject.toml` decision.
 
@@ -339,19 +339,19 @@ There's no single archive file left to hash by the time a directory
 exists, so this is used exactly as given, with no verification. It's for
 a directory whose *provenance* was already established elsewhere
 (`uv python install`, or a prior `python_archive` + `python_sha256` run)
-and is now trusted as a fixed input — the same way pointing
+and is now trusted as a fixed input - the same way pointing
 `appimagetool`/`runtime_file` at a local path is trusted without a hash
 pin. `reproducible` accepts `python_dir` in place of `python_date` for
-that reason — but `check`'s checklist marks it *trusted, unverified*
+that reason - but `check`'s checklist marks it *trusted, unverified*
 rather than a hash-checked pin, since you're asserting that trust, not
 `appimage.ctl`.
 
-Set at most one of `python_dir`/`python_archive` — having both is
+Set at most one of `python_dir`/`python_archive` - having both is
 ambiguous and rejected as a config error.
 
 ## Verified dependencies
 
-Everything above pins *appimage.ctl's own* build tooling — appimagetool,
+Everything above pins *appimage.ctl's own* build tooling - appimagetool,
 the runtime stub, the interpreter. None of it touches how your project's
 third-party dependencies get installed: by default, `pip install
 ".[extras]"` resolves and downloads whatever the index currently serves,
@@ -362,7 +362,7 @@ One dependency is the exception, verified with no configuration at all:
 the bundled `appimage` runtime module itself (the one AppRun and the
 `--python-*` flags depend on) is always installed pinned to the exact
 version of `appimage.ctl` doing the build, hash-verified against the
-digest PyPI publishes for that release — its correct hash is always
+digest PyPI publishes for that release - its correct hash is always
 knowable in advance, unlike third-party packages. Falls back to a
 warning (or a hard error under `verify_downloads`) if PyPI can't be
 reached. `pylock` (below) covers it the normal way once configured,
@@ -402,11 +402,11 @@ AppImage actually bundles. `lock` also reads `extras`/`packages` from
 `[tool.appimage]` for you, so that list isn't maintained twice.
 
 `appimage==2.0.1` and any `packages` entries are real PyPI distributions
-and stay in the lock with their own hash like any other dependency — only
+and stay in the lock with their own hash like any other dependency - only
 the local project (`.`/`.[extras]`) has no stable hash to pin between
 source edits, so it's installed separately at build time (below) instead.
 `lock` resolves everything together, then strips just the local project's
-entry from the result afterwards — deliberately not via `pip lock
+entry from the result afterwards - deliberately not via `pip lock
 --only-deps`, which excludes *every* given requirement, not a chosen one,
 and would have dropped `appimage`'s and `packages`' own pins too (see
 [For LLMs and coding agents](llms.md) for the full reasoning).
@@ -421,8 +421,8 @@ pip install --no-compile --no-deps .[extras]              # local source, truste
 pip install --no-compile --require-hashes -r pylock.toml  # everything else, hash-verified
 ```
 
-Two calls, not one, because pip's hash-checking mode — triggered the
-moment any requirement in a given invocation carries a hash — then demands
+Two calls, not one, because pip's hash-checking mode - triggered the
+moment any requirement in a given invocation carries a hash - then demands
 *every* requirement in that same invocation carry one; mixing the unhashed
 local project into the `--require-hashes` call would fail outright.
 `--no-deps` on the local install keeps it strictly to its own listed
@@ -437,14 +437,14 @@ instead of silently installing an AppDir missing a transitive dependency.
 `--uploaded-prior-to PnD` on `lock` (e.g. `P7D`): excludes packages
 published more recently than that window from the resolution, giving the
 community time to catch a compromised release before it gets locked in.
-It only makes sense at generation time — the real build installs exactly
+It only makes sense at generation time - the real build installs exactly
 what's already pinned in `pylock.toml`, so a cooldown there would have
 nothing left to act on.
 
 ### Private package indexes (Artifactory, Nexus, devpi, ...)
 
 Neither `lock` nor a normal build passes any pip-specific flags for index
-selection or authentication — no `--index-url`, no custom `env=` for the
+selection or authentication - no `--index-url`, no custom `env=` for the
 subprocess. Every `pip`/`pip lock` call in `appimage.ctl` inherits the
 calling process's environment as-is, so pip's own standard mechanisms
 already work with no configuration on appimage's side:
@@ -459,26 +459,26 @@ Point these at an internal Artifactory/Nexus/devpi mirror the same way you
 would for any other pip invocation, and both `packages`/`extras`
 installs and `lock`'s dependency resolution pick it up automatically.
 Credentials belong in environment/config, not as CLI arguments to a
-subprocess — an argument list can leak to other users on the same
+subprocess - an argument list can leak to other users on the same
 machine via process listings.
 
 No one-off CLI passthrough for occasional overrides yet (e.g. pointing a
-single `lock` run at a different index without touching `pip.conf`) —
+single `lock` run at a different index without touching `pip.conf`) -
 only the persistent env/config path above.
 
 ### Relationship to `reproducible`
 
 `pylock`/`require_pylock` are deliberately independent of `reproducible`
-— hash-pinned dependencies and byte-identical output are separate
+- hash-pinned dependencies and byte-identical output are separate
 guarantees, and `reproducible` does not imply or require `pylock`. Opt
-into both explicitly if you want both — `enable-reproducible` happens to
+into both explicitly if you want both - `enable-reproducible` happens to
 set up both together as a convenience, but nothing stops you from setting
 `reproducible = true` by hand after a piecewise `init`, without ever
 running `lock`.
 
 ### Known limits
 
-`pip lock` is documented by pip itself as experimental — its behavior may
+`pip lock` is documented by pip itself as experimental - its behavior may
 change without notice in a future pip release. `pip install -r
 pylock.toml --require-hashes` needs pip >= 26.1 in the bundled
 interpreter; `lock` checks for pip >= 25.1 (what `pip lock` itself
@@ -488,15 +488,15 @@ this tool's own message.
 
 ## Verified build backend
 
-`pylock` hash-pins the packaged project's *third-party* dependencies —
+`pylock` hash-pins the packaged project's *third-party* dependencies -
 not the project itself. Installing the project's own source always
 triggers a PEP 517 isolated build, and by default pip populates that
 isolated environment by resolving the project's `[build-system].requires`
 (e.g. `setuptools`, `hatchling`, `uv_build`) fresh from the index, on
-every single build. Unpinned and unverified — the same class of gap
+every single build. Unpinned and unverified - the same class of gap
 `pylock` closes for runtime dependencies, just one level down.
 
-`build_pylock` closes it, generated by `lock` alongside `pylock.toml` —
+`build_pylock` closes it, generated by `lock` alongside `pylock.toml` -
 no separate flag or hand-written file needed:
 
 ```sh
@@ -509,7 +509,7 @@ build_pylock = "pylock.build.toml"
 ```
 
 `[build-system].requires` changes rarely, so `lock` re-locks it on
-every run alongside `pylock.toml` rather than needing a dedicated flag —
+every run alongside `pylock.toml` rather than needing a dedicated flag -
 cheap when nothing changed, and it means one command keeps both in sync.
 Point `build_pylock` at whatever path fits your project's own
 conventions; `pylock.build.toml` above is just `lock`'s default.
@@ -519,11 +519,11 @@ Consumed differently from `pylock.toml`: `pip install --build-constraint`
 format](https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-build-constraint)
 PEP 751 defines, so `build_pylock` is converted to a classic
 hash-pinned constraints file at install time and passed as
-`--build-constraint` when installing the project itself — pip still
+`--build-constraint` when installing the project itself - pip still
 builds it in its own fresh, throwaway isolated environment; only what
 gets installed *into* that environment is now hash-verified instead of
 resolved live. (An earlier approach installed the backend directly into
-the main interpreter with `--no-build-isolation` instead — left it
+the main interpreter with `--no-build-isolation` instead - left it
 permanently installed in the shipped AppImage and broke reproducibility
 via its own install-time bytecode timestamps; see [For LLMs and coding
 agents](llms.md) for why that was dropped.)
@@ -534,18 +534,18 @@ agents](llms.md) for why that was dropped.)
 ### Known limits
 
 `build_pylock` only covers packages resolved while building your
-project's wheel — it doesn't change how the project's *own*
+project's wheel - it doesn't change how the project's *own*
 `[build-system].requires` version specifier itself is resolved (an
 unpinned specifier like `"hatchling"` still floats to whatever `pip lock`
 resolves as latest, unless pinned). For most backends, pin
 `[build-system].requires` to an exact version in your own
 `pyproject.toml` too, so `lock` has one specific release to hash
-rather than a moving target — see the [development
+rather than a moving target - see the [development
 chapter](develop/reproducible-builds.md) for this project's own choice of
 backend and how it's pinned (a bounded range rather than an exact pin,
 for reasons specific to that backend, and pinned via a separate,
 hand-generated `requirements-build.txt` for *this project's own* PyPI
-wheel — a different, unrelated mechanism from `build_pylock` above).
+wheel - a different, unrelated mechanism from `build_pylock` above).
 
 ## Not covered here
 

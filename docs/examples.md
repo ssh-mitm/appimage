@@ -40,7 +40,7 @@ def main() -> None:
     print("Hello from AppImage!")
 ```
 
-No `[tool.appimage]` section is needed — `app`, `entry_point`, and `python` are all detected automatically from the `[project]` table.
+No `[tool.appimage]` section is needed - `app`, `entry_point`, and `python` are all detected automatically from the `[project]` table.
 
 ## Build the example
 
@@ -53,7 +53,7 @@ The AppImage is written to `examples/myapp/dist/myapp-x86_64.AppImage`.
 
 ## Offline / CI build
 
-When building in a network-restricted environment or sharing a cache across builds, point the tool to local copies of appimagetool, the runtime file, and the Python distribution — all three, since appimagetool alone still tries to fetch the runtime file live over the network unless one is supplied:
+When building in a network-restricted environment or sharing a cache across builds, point the tool to local copies of appimagetool, the runtime file, and the Python distribution - all three, since appimagetool alone still tries to fetch the runtime file live over the network unless one is supplied:
 
 ```sh
 python -m appimage.ctl \
@@ -77,7 +77,7 @@ python_archive = "/shared/cache/python.tar.gz"
 python_sha256 = "78c7cb..."
 ```
 
-The `*_sha256` fields are optional but recommended for offline/CI builds — verifying a
+The `*_sha256` fields are optional but recommended for offline/CI builds - verifying a
 local copy never touches the network, and turns a silently swapped-out file into a loud
 build failure instead. Add `verify_downloads = true` to make an unpinned local path a
 hard error too, instead of just a warning.
@@ -88,7 +88,7 @@ hard error too, instead of just a warning.
 2. Cached binary in `build/appimagetool-<arch>.AppImage`
 3. Downloaded from GitHub
 
-`PATH` is never searched — see [Classic appimagetool
+`PATH` is never searched - see [Classic appimagetool
 detected](reproducible-builds.md#classic-appimagetool-detected) for why.
 Whichever binary is resolved is verified against `appimagetool_sha256` when set,
 regardless of which step it came from. A fresh download (step 3) is additionally
@@ -102,7 +102,7 @@ unset.
 3. Downloaded from GitHub
 
 Same verification behavior as appimagetool, via `runtime_sha256`. Unlike appimagetool,
-there is no `PATH` lookup step — the runtime file isn't something you'd have installed
+there is no `PATH` lookup step - the runtime file isn't something you'd have installed
 system-wide.
 
 **Resolution order for the Python archive:**
@@ -112,5 +112,5 @@ system-wide.
 3. Downloaded from python-build-standalone
 
 A local archive or cached tarball (steps 1–2) is only verified when `python_sha256` is
-explicitly set. A fresh download (step 3) is always verified — against `python_sha256`
+explicitly set. A fresh download (step 3) is always verified - against `python_sha256`
 if set, otherwise against the digest GitHub already publishes for the release asset.
