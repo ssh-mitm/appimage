@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Final
 
 from appimage.ctl._appimagetool import (
+    _appimagetool_cache_path,
     _appimagetool_version_string,
     _resolve_appimagetool,
     _resolve_runtime_file,
+    _runtime_cache_path,
 )
 from appimage.ctl._base import _DEFAULT_ICON, BuildConfig, _resolve, _ResolvedBuild
 from appimage.ctl._download import _sha256_file
@@ -88,13 +90,13 @@ def _pinned_download_fields(
             new["appimage_sha256"] = digest
 
     if "appimagetool_version" not in existing and "appimagetool_sha256" not in existing:
-        appimagetool_cache = build_dir / f"appimagetool-{arch}.AppImage"
+        appimagetool_cache = _appimagetool_cache_path(build_dir, arch)
         tool = _resolve_appimagetool(resolved, appimagetool_cache, arch)
         new["appimagetool_version"] = _appimagetool_version_string(tool)
         new["appimagetool_sha256"] = _sha256_file(tool)
 
     if "runtime_sha256" not in existing:
-        runtime_cache = build_dir / f"runtime-{arch}"
+        runtime_cache = _runtime_cache_path(build_dir, arch)
         runtime = _resolve_runtime_file(resolved, runtime_cache, arch)
         new["runtime_sha256"] = _sha256_file(runtime)
 
@@ -132,7 +134,7 @@ def write_config(config: BuildConfig, project_root: Path) -> None:
 
     """
     resolved = _resolve(config, project_root)
-    _format_check(resolved)
+    _format_check(resolved, project_root)
 
     pyproject_path = project_root / "pyproject.toml"
     with pyproject_path.open("rb") as f:

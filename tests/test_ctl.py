@@ -7,6 +7,7 @@ network or execute real binaries.
 import hashlib
 import importlib
 import json
+import platform
 import subprocess
 import tomllib
 from pathlib import Path
@@ -2061,6 +2062,196 @@ def test_reproducibility_summary_marks_each_layer_ready_or_not() -> None:
     )
     assert any(line.strip().startswith("✓") and "Dependency verification:" in line for line in lines)
     assert any(line.strip().startswith("✗") and "Build backend verification:" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# _resolution_source
+#
+# The single, shared classifier every _resolve_*/_locate_* function (and
+# check()'s verify_downloads prediction below) uses to decide "explicit
+# config path, then the build cache, then a download" — one implementation
+# of that precedence, not duplicated per caller.
+# ---------------------------------------------------------------------------
+
+def test_resolution_source_config_when_explicit_set(tmp_path: Path) -> None:
+    from appimage.ctl._download import _resolution_source
+
+    assert _resolution_source("some/path", tmp_path / "cache") == "config"
+
+
+def test_resolution_source_cache_when_no_explicit_but_cache_exists(tmp_path: Path) -> None:
+    from appimage.ctl._download import _resolution_source
+
+    cache = tmp_path / "cache"
+    cache.write_bytes(b"x")
+    assert _resolution_source("", cache) == "cache"
+
+
+def test_resolution_source_download_when_neither(tmp_path: Path) -> None:
+    from appimage.ctl._download import _resolution_source
+
+    assert _resolution_source("", tmp_path / "cache") == "download"
+
+
+def test_resolution_source_config_wins_even_if_cache_also_exists(tmp_path: Path) -> None:
+    """Explicit config always takes precedence over an existing cache file."""
+    from appimage.ctl._download import _resolution_source
+
+    cache = tmp_path / "cache"
+    cache.write_bytes(b"x")
+    assert _resolution_source("some/path", cache) == "config"
+
+
+# ---------------------------------------------------------------------------
+# _predict_unverified_downloads (check's verify_downloads/hash-pin
+# cross-reference)
+#
+# Regression coverage for the specific false-positive risk that ruled out a
+# naive "verify_downloads set + no sha256 -> warn" check: a fresh download
+# is always auto-verified against the digest GitHub publishes, regardless
+# of whether a pin is configured, so it must never be flagged — only an
+# explicit config path or an existing build-cache hit with no pin actually
+# fails under verify_downloads.
+# ---------------------------------------------------------------------------
+
+def test_predict_unverified_downloads_noop_without_verify_downloads(tmp_path: Path) -> None:
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    resolved = make_resolved()  # verify_downloads=False by default
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert resolved.appdir_errors == []
+    assert resolved.package_errors == []
+
+
+def test_predict_unverified_downloads_noop_under_reproducible(tmp_path: Path) -> None:
+    """reproducible already requires every pin unconditionally (see the dedicated
+    checks in _resolve()) — this prediction would just be a redundant second
+    error for the same root cause, so it deliberately skips when reproducible
+    is set.
+    """
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    resolved = make_resolved(verify_downloads=True, reproducible=True)
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert resolved.appdir_errors == []
+    assert resolved.package_errors == []
+
+
+def test_predict_unverified_downloads_noop_for_fresh_download(tmp_path: Path) -> None:
+    """The common, valid case a naive check would have wrongly flagged: nothing
+    configured, nothing cached yet -> a fresh download, always auto-verified,
+    regardless of whether a pin is set.
+    """
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    resolved = make_resolved(verify_downloads=True)
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert resolved.appdir_errors == []
+    assert resolved.package_errors == []
+
+
+def test_predict_unverified_downloads_flags_cached_appimagetool_without_pin(
+    tmp_path: Path,
+) -> None:
+    from appimage.ctl._appimagetool import _appimagetool_cache_path
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    _appimagetool_cache_path(build_dir, platform.machine()).write_bytes(b"x")
+
+    resolved = make_resolved(verify_downloads=True)
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert len(resolved.package_errors) == 1
+    assert "appimagetool" in resolved.package_errors[0]
+    assert "appimagetool_sha256" in resolved.package_errors[0]
+    assert resolved.appdir_errors == []
+
+
+def test_predict_unverified_downloads_flags_explicit_runtime_file_without_pin(
+    tmp_path: Path,
+) -> None:
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    resolved = make_resolved(verify_downloads=True, runtime_file="some/runtime")
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert len(resolved.package_errors) == 1
+    assert "runtime file" in resolved.package_errors[0]
+    assert "runtime_sha256" in resolved.package_errors[0]
+
+
+def test_predict_unverified_downloads_flags_cached_python_archive_without_pin(
+    tmp_path: Path,
+) -> None:
+    from appimage.ctl._python import _python_tarball_cache_path
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    _python_tarball_cache_path(build_dir).write_bytes(b"x")
+
+    resolved = make_resolved(verify_downloads=True)
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert len(resolved.appdir_errors) == 1
+    assert "python archive" in resolved.appdir_errors[0]
+    assert resolved.package_errors == []
+
+
+def test_predict_unverified_downloads_skips_python_archive_when_python_dir_set(
+    tmp_path: Path,
+) -> None:
+    """python_dir bypasses tarball resolution entirely — no prediction should
+    apply to it, matching _install_python's own bypass.
+    """
+    from appimage.ctl._python import _python_tarball_cache_path
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    _python_tarball_cache_path(build_dir).write_bytes(b"x")
+
+    resolved = make_resolved(verify_downloads=True, python_dir="/some/trusted/python")
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert resolved.appdir_errors == []
+
+
+def test_predict_unverified_downloads_noop_when_pin_configured(tmp_path: Path) -> None:
+    from appimage.ctl._appimagetool import _appimagetool_cache_path
+    from appimage.ctl.check import _predict_unverified_downloads
+
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    _appimagetool_cache_path(build_dir, platform.machine()).write_bytes(b"x")
+
+    resolved = make_resolved(verify_downloads=True, appimagetool_sha256="a" * 64)
+    _predict_unverified_downloads(resolved, tmp_path)
+
+    assert resolved.package_errors == []
+
+
+def test_format_check_surfaces_predicted_unverified_download(tmp_path: Path) -> None:
+    """End-to-end through _format_check(): the prediction actually reaches the
+    errors that check()/build()/build_appdir() all act on, not just the
+    prediction function in isolation.
+    """
+    from appimage.ctl._appimagetool import _appimagetool_cache_path
+    from appimage.ctl.check import _format_check
+
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    _appimagetool_cache_path(build_dir, platform.machine()).write_bytes(b"x")
+
+    resolved = make_resolved(verify_downloads=True)
+    _format_check(resolved, tmp_path)
+
+    assert len(resolved.package_errors) == 1
 
 
 # ---------------------------------------------------------------------------

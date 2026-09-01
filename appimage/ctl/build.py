@@ -10,8 +10,14 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
-from appimage.ctl._appimagetool import _resolve_appimagetool, _resolve_runtime_file
+from appimage.ctl._appimagetool import (
+    _appimagetool_cache_path,
+    _resolve_appimagetool,
+    _resolve_runtime_file,
+    _runtime_cache_path,
+)
 from appimage.ctl._base import BuildConfig, _resolve
+from appimage.ctl._python import _python_tarball_cache_path
 from appimage.ctl.build_appdir import _assemble_appdir
 from appimage.ctl.check import _format_check
 
@@ -35,7 +41,7 @@ def build(config: BuildConfig, project_root: Path) -> None:
 
     """
     resolved = _resolve(config, project_root)
-    _format_check(resolved)
+    _format_check(resolved, project_root)
 
     if resolved.appdir_errors or resolved.package_errors:
         raise SystemExit(1)
@@ -44,9 +50,9 @@ def build(config: BuildConfig, project_root: Path) -> None:
     build_dir = project_root / resolved.build_dir
     appdir = build_dir / "AppDir"
     dist_dir = project_root / resolved.dist_dir
-    python_cache = build_dir / "python.tar.gz"
-    appimagetool_cache = build_dir / f"appimagetool-{arch}.AppImage"
-    runtime_cache = build_dir / f"runtime-{arch}"
+    python_cache = _python_tarball_cache_path(build_dir)
+    appimagetool_cache = _appimagetool_cache_path(build_dir, arch)
+    runtime_cache = _runtime_cache_path(build_dir, arch)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
 
     _assemble_appdir(resolved, appdir, python_cache, arch, project_root, epoch)

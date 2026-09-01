@@ -2,10 +2,14 @@
 """The ``check`` subcommand: resolve and report the build configuration."""
 
 import logging
+import platform
 from pathlib import Path
 from typing import Final
 
+from appimage.ctl._appimagetool import _appimagetool_cache_path, _runtime_cache_path
 from appimage.ctl._base import BuildConfig, _resolve, _ResolvedBuild
+from appimage.ctl._download import _resolution_source
+from appimage.ctl._python import _python_tarball_cache_path
 
 _log: Final = logging.getLogger(__name__)
 
@@ -163,15 +167,104 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
     ]
 
 
-def _format_check(resolved: _ResolvedBuild) -> None:
+def _append_unverified_download_error(
+    bucket: list[str],
+    label: str,
+    explicit: str,
+    pin: str,
+    cache_path: Path,
+    config_key: str,
+) -> None:
+    """Append an error to *bucket* if *label* would resolve unverified under ``verify_downloads``.
+
+    A pin already configured, or a resolution that would download fresh
+    (always auto-verified against the digest GitHub publishes for the
+    asset, regardless of any pin), is never a problem — only an explicit
+    config path or an existing build-cache hit with no matching pin is.
+    """
+    if pin:
+        return
+    if _resolution_source(explicit, cache_path) == "download":
+        return
+    bucket.append(
+        f"verify_downloads is set, but {label} would resolve unverified (no "
+        f"{config_key} pin configured) — the build would abort at that point. "
+        f"Set {config_key} (run 'init' to resolve and pin it).",
+    )
+
+
+def _predict_unverified_downloads(resolved: _ResolvedBuild, project_root: Path) -> None:
+    """Append early appdir_errors/package_errors entries for downloads ``verify_downloads`` would reject.
+
+    Computed purely from config plus a cheap existence check on the
+    conventional build-cache paths — no network, no hashing — so this is
+    safe to run on every ``check()`` (and, via ``_format_check``, every
+    ``build()``/``build_appdir()``). Reuses ``_resolution_source``, the
+    exact same precedence function ``_locate_appimagetool``/
+    ``_resolve_runtime_file``/``_resolve_python_tarball`` call to decide
+    the very same thing for real — there's no second copy of "explicit
+    path, then cache, then download" to drift out of sync here.
+
+    Deliberately only predicts the ``verify_downloads``-alone case.
+    ``reproducible`` already requires every pin
+    (``appimagetool_sha256``/``runtime_sha256`` in ``package_errors``,
+    similarly for the AppDir-side pins) to be set unconditionally,
+    regardless of how it would resolve — a stricter, resolution-independent
+    check that already fully covers it, so predicting it here too would
+    just be a redundant second error for the same root cause. Only
+    ``verify_downloads`` set without ``reproducible`` needs this
+    prediction, since there a resolution that would download fresh is
+    perfectly fine unpinned — the naive version of this check (ignoring
+    resolution kind entirely) would otherwise warn on that same, common,
+    perfectly valid case.
+    """
+    if not resolved.verify_downloads or resolved.reproducible:
+        return
+
+    arch = platform.machine()
+    build_dir = project_root / resolved.build_dir
+
+    _append_unverified_download_error(
+        resolved.package_errors,
+        "appimagetool",
+        resolved.appimagetool,
+        resolved.appimagetool_sha256,
+        _appimagetool_cache_path(build_dir, arch),
+        "appimagetool_sha256",
+    )
+    _append_unverified_download_error(
+        resolved.package_errors,
+        "runtime file",
+        resolved.runtime_file,
+        resolved.runtime_sha256,
+        _runtime_cache_path(build_dir, arch),
+        "runtime_sha256",
+    )
+    if not resolved.python_dir:
+        _append_unverified_download_error(
+            resolved.appdir_errors,
+            "python archive",
+            resolved.python_archive,
+            resolved.python_sha256,
+            _python_tarball_cache_path(build_dir),
+            "python_sha256",
+        )
+
+
+def _format_check(resolved: _ResolvedBuild, project_root: Path) -> None:
     """Log a human-readable configuration report.
 
     Parameters
     ----------
     resolved : _ResolvedBuild
         Resolved build configuration to report.
+    project_root : Path
+        Project root directory — needed to compute conventional build-cache
+        paths for ``_predict_unverified_downloads``.
 
     """
+    _predict_unverified_downloads(resolved, project_root)
+
     _log.info("Build configuration:")
 
     rows: list[tuple[str, str, str]] = [
@@ -235,5 +328,5 @@ def check(config: BuildConfig, project_root: Path) -> bool:
 
     """
     resolved = _resolve(config, project_root)
-    _format_check(resolved)
+    _format_check(resolved, project_root)
     return not (resolved.appdir_errors or resolved.package_errors)

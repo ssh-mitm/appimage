@@ -37,7 +37,7 @@ def update_tools(config: BuildConfig, project_root: Path) -> None:
 
     """
     resolved = _resolve(config, project_root)
-    _format_check(resolved)
+    _format_check(resolved, project_root)
 
     new = _pinned_download_fields(resolved, project_root, existing=set())
 

@@ -100,6 +100,34 @@ def _fetch_release_asset_digest(
     raise RuntimeError(msg)
 
 
+def _resolution_source(explicit: str, cache_path: Path) -> str:
+    """Classify which branch a ``_resolve_*``/``_locate_*`` function would take.
+
+    Returns ``"config"`` (an explicit path is configured), ``"cache"`` (no
+    explicit path, but *cache_path* already exists), or ``"download"``
+    (neither — a fresh download would happen). Pure and I/O-limited to a
+    single existence check (no hashing, no network) so it's cheap enough to
+    call from ``check()`` too, not just from an actual build.
+
+    This is the one place encoding "explicit config path, then the build
+    cache, then a download" precedence — every ``_resolve_*``/``_locate_*``
+    function in ``appimage.ctl`` (appimagetool, the runtime stub, the
+    Python archive) calls this rather than re-implementing the same
+    if/elif/else, and ``check()`` calls it too to predict, without
+    downloading anything, whether ``verify_downloads`` would actually abort
+    a real build for a given artifact: only ``"config"``/``"cache"`` can
+    ever be used unverified without a pin — a ``"download"`` is always
+    auto-verified against the digest GitHub publishes for the asset. Kept
+    in sync with the real resolvers automatically, since there's only one
+    implementation of the precedence to drift from.
+    """
+    if explicit:
+        return "config"
+    if cache_path.exists():
+        return "cache"
+    return "download"
+
+
 def _sha256_file(path: Path) -> str:
     """Return the lowercase hex sha256 digest of *path*."""
     digest = hashlib.sha256()

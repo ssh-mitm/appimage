@@ -15,10 +15,22 @@ from appimage.ctl._download import (
     _download,
     _github_api_get,
     _require_or_warn_unverified,
+    _resolution_source,
     _verify_sha256,
 )
 
 _log: Final = logging.getLogger(__name__)
+
+
+def _python_tarball_cache_path(build_dir: Path) -> Path:
+    """Return the conventional build-cache path for a resolved Python tarball.
+
+    The one place encoding this filename convention — see
+    ``_appimagetool._appimagetool_cache_path`` for the equivalent for
+    appimagetool/the runtime stub, and the same rationale.
+    """
+    return build_dir / "python.tar.gz"
+
 
 _ARCH_MAP: Final[dict[str, str]] = {
     "x86_64": "x86_64",
@@ -131,7 +143,9 @@ def _resolve_python_tarball(
     ``verify_downloads`` is also set, the documented offline/CI workflow
     stays fully network-free by default and this is used unverified.
     """
-    if resolved.python_archive:
+    source = _resolution_source(resolved.python_archive, python_cache)
+
+    if source == "config":
         tarball = Path(resolved.python_archive)
         if not tarball.exists():
             msg = f"Python archive not found: {tarball}"
@@ -147,7 +161,7 @@ def _resolve_python_tarball(
                 strict=resolved.verify_downloads,
             )
         return tarball
-    if python_cache.exists():
+    if source == "cache":
         _log.info("Using cached python.tar.gz")
         if resolved.python_sha256:
             _verify_sha256(python_cache, resolved.python_sha256, label="python archive")

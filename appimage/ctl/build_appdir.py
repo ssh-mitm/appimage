@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Final
 
 from appimage.ctl._base import BuildConfig, _resolve, _ResolvedBuild
-from appimage.ctl._python import _install_python
+from appimage.ctl._python import _install_python, _python_tarball_cache_path
 from appimage.ctl.check import _format_check
 
 _log: Final = logging.getLogger(__name__)
@@ -892,7 +892,7 @@ def _resolve_for_appdir(
 
     """
     resolved = _resolve(config, project_root)
-    _format_check(resolved)
+    _format_check(resolved, project_root)
 
     if resolved.appdir_errors:
         raise SystemExit(1)
@@ -900,7 +900,7 @@ def _resolve_for_appdir(
     arch = platform.machine()
     build_dir = project_root / resolved.build_dir
     appdir = build_dir / "AppDir"
-    python_cache = build_dir / "python.tar.gz"
+    python_cache = _python_tarball_cache_path(build_dir)
     return resolved, arch, appdir, python_cache
 
 

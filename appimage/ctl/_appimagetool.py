@@ -11,6 +11,7 @@ from appimage.ctl._download import (
     _download,
     _fetch_release_asset_digest,
     _require_or_warn_unverified,
+    _resolution_source,
     _verify_sha256,
 )
 
@@ -24,6 +25,31 @@ _APPIMAGETOOL_ARCH_MAP: Final[dict[str, str]] = {
     "aarch64": "aarch64",
     "armv7l": "armhf",
 }
+
+
+def _appimagetool_cache_path(build_dir: Path, arch: str) -> Path:
+    """Return the conventional build-cache path for a resolved appimagetool binary.
+
+    The one place encoding this filename convention — callers that need to
+    know where appimagetool would be cached without actually resolving it
+    (``build()``, ``init``, and ``check()``'s ``verify_downloads``
+    prediction) all call this instead of reconstructing the f-string
+    themselves. Note *arch* is the raw ``platform.machine()`` value, not
+    run through ``_APPIMAGETOOL_ARCH_MAP`` — that mapping only affects
+    which GitHub release asset gets downloaded, not the local cache
+    filename.
+    """
+    return build_dir / f"appimagetool-{arch}.AppImage"
+
+
+def _runtime_cache_path(build_dir: Path, arch: str) -> Path:
+    """Return the conventional build-cache path for a resolved AppImage runtime stub.
+
+    See ``_appimagetool_cache_path`` — same rationale, same raw-``arch``
+    convention.
+    """
+    return build_dir / f"runtime-{arch}"
+
 
 # AppImage/AppImageKit's classic C appimagetool is no longer maintained (its
 # bundled mksquashfs has a documented non-deterministic multi-threaded
@@ -184,7 +210,9 @@ def _locate_appimagetool(
     already covers "use a specific binary I already have" without that
     ambiguity.
     """
-    if resolved.appimagetool:
+    source = _resolution_source(resolved.appimagetool, appimagetool_cache)
+
+    if source == "config":
         tool = Path(resolved.appimagetool)
         if not tool.exists():
             msg = f"appimagetool not found: {tool}"
@@ -192,7 +220,7 @@ def _locate_appimagetool(
         _log.info("Using appimagetool: %s", tool)
         return tool, False, None
 
-    if appimagetool_cache.exists():
+    if source == "cache":
         _log.info("Using cached appimagetool")
         return appimagetool_cache, False, None
 
@@ -284,13 +312,15 @@ def _resolve_runtime_file(
     downloaded = False
     api_sha256: str | None = None
 
-    if resolved.runtime_file:
+    source = _resolution_source(resolved.runtime_file, runtime_cache)
+
+    if source == "config":
         runtime = Path(resolved.runtime_file)
         if not runtime.exists():
             msg = f"runtime file not found: {runtime}"
             raise FileNotFoundError(msg)
         _log.info("Using runtime file: %s", runtime)
-    elif runtime_cache.exists():
+    elif source == "cache":
         runtime = runtime_cache
         _log.info("Using cached runtime file")
     else:
