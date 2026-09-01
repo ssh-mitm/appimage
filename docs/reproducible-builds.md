@@ -63,13 +63,12 @@ reproducible = true
 
 Written automatically by `enable-reproducible` once a build has actually
 succeeded with the pins from `init`/`lock` — or set it by hand after
-verifying a build yourself, if you went the piecewise route. Deliberately
-never set as a side effect of merely resolving or locking values: flipping
-it turns a missing pin into a hard build failure instead of a warning,
-which is a policy decision that should only follow a build that's proven
-to actually work, not the act of writing the pins themselves. Refuses to
-build unless the toolchain pins are already set — see [Pinning for
-cross-machine reproducibility](#pinning-for-cross-machine-reproducibility).
+verifying a build yourself, if you went the piecewise route. `init`/`lock`
+never flip it themselves: it turns a missing pin into a hard build
+failure, and that should follow a build that's proven to work, not just
+the act of writing the pins. Refuses to build unless the toolchain pins
+are already set — see [Pinning for cross-machine
+reproducibility](#pinning-for-cross-machine-reproducibility).
 
 `python -m appimage.ctl check` reports where a project stands at any
 point, without building anything:
@@ -337,18 +336,15 @@ extracting a tarball. Config-only, deliberately with no CLI flag: setting
 it is meant to be a considered, committed-to-`pyproject.toml` decision.
 
 There's no single archive file left to hash by the time a directory
-exists, so this is used exactly as given, with no verification — but
-that's not a gap in this tool's own checking, it's for a directory whose
-*provenance* was already established elsewhere (`uv python install`, or a
-`python_archive` + `python_sha256` run on a prior build) and is now
-trusted as a fixed, reproducible-by-construction input: the same path
-yields the same bytes every time, the same way pointing `appimagetool`/
-`runtime_file` at a local path already works without a hash pin elsewhere
-in this tool. `reproducible` accepts `python_dir` in place of
-`python_date` for exactly this reason — but `check`'s checklist marks it
-as *trusted, unverified* rather than showing it identically to a
-hash-checked pin, since that trust is asserted by you, not established by
-`appimage.ctl` itself.
+exists, so this is used exactly as given, with no verification. It's for
+a directory whose *provenance* was already established elsewhere
+(`uv python install`, or a prior `python_archive` + `python_sha256` run)
+and is now trusted as a fixed input — the same way pointing
+`appimagetool`/`runtime_file` at a local path is trusted without a hash
+pin. `reproducible` accepts `python_dir` in place of `python_date` for
+that reason — but `check`'s checklist marks it *trusted, unverified*
+rather than a hash-checked pin, since you're asserting that trust, not
+`appimage.ctl`.
 
 Set at most one of `python_dir`/`python_archive` — having both is
 ambiguous and rejected as a config error.
@@ -365,15 +361,12 @@ up inside the AppImage with nothing to catch it.
 One dependency is the exception, verified with no configuration at all:
 the bundled `appimage` runtime module itself (the one AppRun and the
 `--python-*` flags depend on) is always installed pinned to the exact
-version of `appimage.ctl` doing the build, and its install is
-hash-verified against the digest PyPI publishes for that release — the
-same free-verification pattern used above for appimagetool/the runtime
-file/the Python archive, since this one dependency's correct hash is
-always independently knowable in advance, unlike arbitrary third-party
-packages. Falls back to a warning (or a hard error under
-`verify_downloads`) if PyPI can't be reached. Configuring `pylock` (below)
-covers this the normal way instead, since `appimage_pin` is included in
-`pylock.toml` alongside every other dependency once one exists.
+version of `appimage.ctl` doing the build, hash-verified against the
+digest PyPI publishes for that release — its correct hash is always
+knowable in advance, unlike third-party packages. Falls back to a
+warning (or a hard error under `verify_downloads`) if PyPI can't be
+reached. `pylock` (below) covers it the normal way once configured,
+since `appimage_pin` joins the lock alongside everything else.
 
 `pylock` closes that gap:
 
@@ -465,16 +458,13 @@ already work with no configuration on appimage's side:
 Point these at an internal Artifactory/Nexus/devpi mirror the same way you
 would for any other pip invocation, and both `packages`/`extras`
 installs and `lock`'s dependency resolution pick it up automatically.
-This is deliberate, not just an accident of not having built anything
-else yet: credentials belong in environment/config, not as CLI arguments
-to a subprocess — an argument list can leak to other users on the same
-machine via process listings in a way an environment variable set only
-for that process does not.
+Credentials belong in environment/config, not as CLI arguments to a
+subprocess — an argument list can leak to other users on the same
+machine via process listings.
 
-There's currently no equivalent of `--build-constraint`-style one-off CLI
-passthrough for occasional, non-persistent overrides (e.g. pointing a
+No one-off CLI passthrough for occasional overrides yet (e.g. pointing a
 single `lock` run at a different index without touching `pip.conf`) —
-only the persistent env/config path above is supported today.
+only the persistent env/config path above.
 
 ### Relationship to `reproducible`
 

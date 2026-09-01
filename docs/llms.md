@@ -1,10 +1,11 @@
 # For LLMs and coding agents
 
-Dense reference for an LLM/coding agent reading, configuring, or modifying
-this project — not a tutorial. The rest of the docs are written for humans
-skimming for what to do; this page exists so the deeper "why", trimmed out
-of those pages for readability, still lives somewhere. Human readers can
-stop here; nothing on this page is needed to use `appimage`.
+This documentation is written for two readers on purpose: a human
+skimming for what to run, and an agent that needs the deeper "why"
+before touching the code. Splitting them keeps the rest of the docs
+short instead of cramming both into every page. This page is the second
+half — a dense reference, not a tutorial. Human readers can stop here;
+nothing on this page is needed to use `appimage`.
 
 ## Module map
 

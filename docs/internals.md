@@ -352,17 +352,16 @@ to `SOURCE_DATE_EPOCH` (default: the Unix epoch) right before packaging, and the
 value is passed into appimagetool's own process environment, since it touches a few
 paths of its own (e.g. `.DirIcon`) that AppDir-side normalization can't reach.
 
-**appimagetool and runtime verification** — appimagetool is resolved from an explicit
-path, then the build cache, then a download; the runtime file the same way minus the
-explicit-path step (`PATH` is never searched for either — see [Classic appimagetool
-detected](reproducible-builds.md#classic-appimagetool-detected)). When
-`appimagetool_sha256`/`runtime_sha256` are set, the resolved binary is verified against
-it before use; a mismatch aborts the build loudly rather than silently packing with an
-unexpected binary (see Step 8). appimagetool is also checked against known signs of the
-classic, non-deterministic build regardless of any pin, and refused outright on a match.
-The runtime file is always pre-fetched and passed via `--runtime-file`, so appimagetool
-never triggers its own live download. `verify_downloads` turns an unpinned resolution
-into a hard error instead of a warning.
+**appimagetool and runtime verification** — both resolve from an explicit path, then
+the build cache, then a download; `PATH` is never searched for either (see [Classic
+appimagetool detected](reproducible-builds.md#classic-appimagetool-detected)).
+`appimagetool_sha256`/`runtime_sha256` verify the resolved binary before use; a
+mismatch aborts rather than silently packing with the wrong one (see Step 8).
+appimagetool is also checked for known signs of the classic, non-deterministic build
+and refused outright on a match, pin or not. The runtime file is always pre-fetched
+and passed via `--runtime-file`, so appimagetool never triggers its own live
+download. `verify_downloads` turns an unpinned resolution into a hard error instead
+of a warning.
 
 **Dependency and build-backend verification** — with `pylock`/`build_pylock` set,
 third-party dependencies and the project's own `[build-system].requires` backend are

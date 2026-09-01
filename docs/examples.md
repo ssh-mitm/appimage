@@ -77,11 +77,10 @@ python_archive = "/shared/cache/python.tar.gz"
 python_sha256 = "78c7cb..."
 ```
 
-The `*_sha256` fields are optional but recommended for offline/CI builds: verifying a
-local copy never touches the network, so pinning them turns "trust whatever file happens
-to be at this path" into a build that fails loudly if that file is ever swapped out —
-without changing the fully offline nature of this workflow. Add `verify_downloads =
-true` to make an unpinned local path a hard error too, instead of just a warning.
+The `*_sha256` fields are optional but recommended for offline/CI builds — verifying a
+local copy never touches the network, and turns a silently swapped-out file into a loud
+build failure instead. Add `verify_downloads = true` to make an unpinned local path a
+hard error too, instead of just a warning.
 
 **Resolution order for appimagetool:**
 

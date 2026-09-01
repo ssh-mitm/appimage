@@ -5,11 +5,10 @@ python -m appimage.ctl [COMMAND] [OPTIONS]
 appimagectl [COMMAND] [OPTIONS]
 ```
 
-`python -m appimage.ctl` is the recommended form — the same reasoning as
-`python -m pip` over a bare `pip`: it guarantees the interpreter running
-the tool is the one actually resolving it, rather than whatever
-`appimagectl` happens to be first on `PATH`. The console script is
-installed alongside it for convenience and behaves identically.
+`python -m appimage.ctl` is the recommended form — same reasoning as
+`python -m pip` over a bare `pip`: it's always the interpreter you meant,
+not whatever `appimagectl` happens to be first on `PATH`. The console
+script is installed alongside it and behaves identically.
 
 `COMMAND` defaults to building the AppImage when omitted — `appimagectl`
 on its own, with no configuration required, already builds. The other
@@ -52,7 +51,7 @@ one applies):
 | `--require-zsyncmake` | Abort the build instead of warning when `update_info` is set but appimagetool didn't produce a `.zsync` file (checked after packaging, against the real output — see [Configuration](configuration.md#build-options)). |
 | `--pylock PATH` | Path to a hash-pinned `pylock.toml` for third-party dependencies. Generate it with `lock`. |
 | `--require-pylock` | Abort the build instead of warning when `pylock` is not set. |
-| `--build-pylock PATH` | Path to a hash-pinned pylock-format file constraining the packaged project's own `[build-system].requires`. Converted to a classic hash-pinned constraints file and passed as `pip install --build-constraint` when installing the project itself, so pip's isolated build environment is hash-verified too. Generate it with `lock`, alongside `pylock.toml`. |
+| `--build-pylock PATH` | Path to a hash-pinned pylock-format file constraining the packaged project's own `[build-system].requires`, so pip's isolated build environment for it is hash-verified too. Generate it with `lock`, alongside `pylock.toml` — see [Verified build backend](reproducible-builds.md#verified-build-backend). |
 | `--require-build-pylock` | Abort the build instead of warning when `build_pylock` is not set. |
 | `--uploaded-prior-to PnD` | Only meaningful on `lock`/`enable-reproducible`: passed through to `pip lock --uploaded-prior-to` as a cooldown window (e.g. `P7D` excludes packages published in the last 7 days) — gives the community time to catch a compromised release before it gets locked in. Applies to both lock files generated. |
 | `--reproducible` | Enforce a build that's reproducible across machines and over time: implies `--verify-downloads` and `--require-zsyncmake`, and requires `python_date`/`appimagetool_sha256`/`runtime_sha256` to already be set (run `init` first). Does not resolve or write any values itself — for that, see `enable-reproducible` above. Independent of `--pylock`/`--require-pylock`/`--build-pylock`/`--require-build-pylock` — opt into dependency and build-backend hash-pinning separately. |
