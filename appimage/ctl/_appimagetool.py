@@ -2,7 +2,6 @@
 """Resolving, downloading, and verifying appimagetool and the AppImage runtime stub."""
 
 import logging
-import shutil
 import subprocess  # nosec B404
 from pathlib import Path
 from typing import Final
@@ -58,6 +57,157 @@ def _appimagetool_version_string(tool: Path) -> str:
     return (result.stderr or result.stdout).strip()
 
 
+# Byte sequences that only turn up in a build of the classic, unmaintained
+# probonopd/AppImageKit appimagetool — never shipped stripped, so its own C
+# source tree's absolute paths leak into the binary as debug-info strings.
+# Checked as a set (any one is enough — each was individually confirmed to
+# produce zero hits against a real AppImage/appimagetool build), not a
+# single bare "/AppImageKit/" substring: the current default's own
+# ``--help`` text incidentally links to ``github.com/AppImage/AppImageKit``'s
+# wiki once, which a looser check would misidentify.
+_APPIMAGEKIT_BUILD_PATH_MARKERS: Final[tuple[bytes, ...]] = (
+    b"/AppImageKit/build/",
+    b"/AppImageKit/lib/",
+    b"libappimage_hashlib",
+    b"libappimage_shared",
+    b"squashfuse-EXTERNAL",
+)
+
+
+def _looks_like_classic_appimagekit(tool: Path) -> str | None:
+    """Best-effort check for the classic, unmaintained AppImageKit ``appimagetool``.
+
+    Its bundled ``mksquashfs`` has a documented non-deterministic
+    multi-threaded compression bug (AppImageKit#929) — the reason this
+    project's own default download switched to the ``AppImage/appimagetool``
+    fork instead (see ``_APPIMAGETOOL_REPO``). Hash-pinning
+    (``appimagetool_sha256``) only proves *which exact file* is in use, not
+    that it's the *right* one: an explicitly configured or cached binary
+    that happens to be this classic build gets faithfully pinned and
+    "verified" on every later build, silently defeating byte-for-byte
+    reproducibility the whole time — confirmed by hand: an otherwise fully
+    pinned, ``--reproducible`` build still produced two different
+    ``.AppImage`` files across two runs, traced back to exactly this
+    (found back when this project's own resolution still searched ``PATH``
+    by default — since removed for exactly this reason, see
+    ``_locate_appimagetool``).
+
+    Neither signal here is individually authoritative on its own — a future
+    release of either project could change — so two independent ones are
+    combined:
+
+    - Debug-info strings leaking the classic build's own absolute source
+      paths (see ``_APPIMAGEKIT_BUILD_PATH_MARKERS``).
+    - The ``--version`` banner's own wording: the classic build's template
+      says ``"(commit ...)"``; the current default's says
+      ``"(git version ...)"``. A runtime string, not a debug symbol, so it
+      would survive the classic build being stripped in some future release
+      even though today's isn't.
+
+    Neither signal fires on the current default fork (verified against a
+    real build of each), but this is still a heuristic — its caller
+    (``_abort_if_classic_appimagekit``) treats a match as build-blocking, so
+    a false positive would refuse a legitimate build. Deliberate trade-off:
+    a silent non-deterministic build is worse than an occasional false
+    abort someone has to work around (see ``docs/reproducible-builds.md``'s
+    "Classic appimagetool detected" section for the fix).
+
+    Returns
+    -------
+    str | None
+        A short, human-readable reason if *tool* looks like the classic
+        build, else ``None``.
+
+    """
+    try:
+        content = tool.read_bytes()
+    except OSError:
+        return None
+
+    if any(marker in content for marker in _APPIMAGEKIT_BUILD_PATH_MARKERS):
+        return "its own AppImageKit build paths are embedded in the binary"
+
+    try:
+        version = _appimagetool_version_string(tool)
+    except OSError:
+        return None
+    if "(commit " in version and "git version" not in version:
+        return f"its --version banner reads {version!r}"
+
+    return None
+
+
+_CLASSIC_APPIMAGEKIT_DOC_URL: Final = (
+    "https://appimage.readthedocs.io/en/latest/"
+    "reproducible-builds.html#classic-appimagetool-detected"
+)
+
+
+def _abort_if_classic_appimagekit(tool: Path) -> None:
+    """Raise if *tool* looks like the classic, unmaintained AppImageKit appimagetool.
+
+    Kept short and pointed at the docs rather than explained in full here —
+    see ``_looks_like_classic_appimagekit`` and
+    ``docs/reproducible-builds.md``'s "Classic appimagetool detected"
+    section for the full reasoning and the actual fix steps.
+    """
+    if reason := _looks_like_classic_appimagekit(tool):
+        # Logged for troubleshooting only (below the CLI's default INFO
+        # level) — how this was detected isn't the user's problem, only
+        # that it was and how to fix it, which the raised message covers.
+        _log.debug("%s: %s", tool, reason)
+        msg = (
+            f"{tool} looks like the classic, unmaintained AppImageKit "
+            f"appimagetool — known non-deterministic mksquashfs "
+            f"(AppImageKit#929). Refusing to build with it. See "
+            f"{_CLASSIC_APPIMAGEKIT_DOC_URL} for how to fix this."
+        )
+        raise RuntimeError(msg)
+
+
+def _locate_appimagetool(
+    resolved: _ResolvedBuild,
+    appimagetool_cache: Path,
+    arch: str,
+) -> tuple[Path, bool, str | None]:
+    """Return appimagetool's path, whether it was just downloaded, and its API-published sha256.
+
+    Precedence: explicit config path, then the build cache, then a fresh
+    download — see ``_resolve_appimagetool`` for what each means for
+    verification. Deliberately never searches ``PATH`` (unlike an earlier
+    version of this function): every other resolved external input in this
+    project — the bundled Python, the runtime stub — is explicit-config-or-
+    download only, and appimagetool searching ``PATH`` was both the odd one
+    out and, in practice, exactly how a stray classic AppImageKit build got
+    silently picked up on a real machine (see
+    ``_looks_like_classic_appimagekit``). An explicit ``appimagetool`` path
+    already covers "use a specific binary I already have" without that
+    ambiguity.
+    """
+    if resolved.appimagetool:
+        tool = Path(resolved.appimagetool)
+        if not tool.exists():
+            msg = f"appimagetool not found: {tool}"
+            raise FileNotFoundError(msg)
+        _log.info("Using appimagetool: %s", tool)
+        return tool, False, None
+
+    if appimagetool_cache.exists():
+        _log.info("Using cached appimagetool")
+        return appimagetool_cache, False, None
+
+    appimagetool_arch = _APPIMAGETOOL_ARCH_MAP.get(arch, arch)
+    asset_name = _APPIMAGETOOL_ASSET.format(arch=appimagetool_arch)
+    url, api_sha256 = _fetch_release_asset_digest(
+        _APPIMAGETOOL_REPO,
+        "continuous",
+        asset_name,
+    )
+    _download(url, appimagetool_cache)
+    appimagetool_cache.chmod(0o755)
+    return appimagetool_cache, True, api_sha256
+
+
 def _resolve_appimagetool(
     resolved: _ResolvedBuild,
     appimagetool_cache: Path,
@@ -66,44 +216,29 @@ def _resolve_appimagetool(
     """Return the path to appimagetool, downloading if necessary.
 
     When ``appimagetool_sha256`` is set, the resolved binary is verified
-    against it regardless of where it came from (explicit path, ``PATH``,
-    build cache, or download) — a mismatch aborts the build. Only a binary
-    this function downloaded itself is deleted on mismatch, so a retry
-    re-downloads cleanly; a user-configured path or a ``PATH``-found binary
-    is never touched. A fresh download is additionally auto-verified
-    against the digest GitHub publishes for the asset, at no extra network
-    cost, even when ``appimagetool_sha256`` is unset. Only a config-path,
-    ``PATH``, or cache resolution with no pin configured is used unverified
-    (with a warning logging its actual hash).
+    against it regardless of where it came from (explicit path, build
+    cache, or download) — a mismatch aborts the build. Only a binary this
+    function downloaded itself is deleted on mismatch, so a retry
+    re-downloads cleanly; a user-configured path is never touched. A fresh
+    download is additionally auto-verified against the digest GitHub
+    publishes for the asset, at no extra network cost, even when
+    ``appimagetool_sha256`` is unset. Only a config-path or cache
+    resolution with no pin configured is used unverified (with a warning
+    logging its actual hash). Unless it was just downloaded
+    (by definition from the right source), also checked against
+    ``_looks_like_classic_appimagekit`` — a match aborts the build outright,
+    regardless of ``appimagetool_sha256``: pinning only proves it's the
+    same (known-bad) file every time, not that it produces reproducible
+    output.
     """
-    tool: Path
-    downloaded = False
-    api_sha256: str | None = None
+    tool, downloaded, api_sha256 = _locate_appimagetool(
+        resolved,
+        appimagetool_cache,
+        arch,
+    )
 
-    if resolved.appimagetool:
-        tool = Path(resolved.appimagetool)
-        if not tool.exists():
-            msg = f"appimagetool not found: {tool}"
-            raise FileNotFoundError(msg)
-        _log.info("Using appimagetool: %s", tool)
-    elif path_tool := shutil.which("appimagetool"):
-        tool = Path(path_tool)
-        _log.info("Using appimagetool from PATH: %s", tool)
-    elif appimagetool_cache.exists():
-        tool = appimagetool_cache
-        _log.info("Using cached appimagetool")
-    else:
-        appimagetool_arch = _APPIMAGETOOL_ARCH_MAP.get(arch, arch)
-        asset_name = _APPIMAGETOOL_ASSET.format(arch=appimagetool_arch)
-        url, api_sha256 = _fetch_release_asset_digest(
-            _APPIMAGETOOL_REPO,
-            "continuous",
-            asset_name,
-        )
-        _download(url, appimagetool_cache)
-        appimagetool_cache.chmod(0o755)
-        tool = appimagetool_cache
-        downloaded = True
+    if not downloaded:
+        _abort_if_classic_appimagekit(tool)
 
     expected = resolved.appimagetool_sha256 or api_sha256
     if expected:

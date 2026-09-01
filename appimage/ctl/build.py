@@ -67,4 +67,34 @@ def build(config: BuildConfig, project_root: Path) -> None:
         env={**os.environ, "SOURCE_DATE_EPOCH": str(epoch)},
         check=True,
     )
+
+    if resolved.update_info:
+        _check_zsync_file(dist_dir, output_name, require=resolved.require_zsyncmake)
+
     _log.info("Done: %s", dist_dir / output_name)
+
+
+def _check_zsync_file(dist_dir: Path, output_name: str, *, require: bool) -> None:
+    """Warn (or, if *require*, abort) when appimagetool didn't produce a ``.zsync`` file.
+
+    Checked against the real output rather than predicted beforehand: an
+    earlier version of this project guessed by checking whether
+    ``zsyncmake`` was on the *build host's* ``PATH`` — but appimagetool
+    bundles its own copy and its ``AppRun`` puts its own ``usr/bin`` first
+    on ``PATH`` (ahead of the host's), so that guess was checking the wrong
+    thing entirely and gave a different, host-dependent answer on every
+    machine regardless of whether packaging would actually produce a
+    ``.zsync`` file or not. Checking the real output after the fact is both
+    simpler and actually accurate.
+    """
+    zsync_path = dist_dir / f"{output_name}.zsync"
+    if zsync_path.exists():
+        return
+    msg = (
+        f"update_info is set but appimagetool did not produce {zsync_path.name} "
+        "— see its own output above for why (a custom appimagetool build "
+        "with no bundled zsyncmake is the most likely cause)."
+    )
+    if require:
+        raise RuntimeError(msg)
+    _log.warning(msg)

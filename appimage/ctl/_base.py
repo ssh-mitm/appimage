@@ -12,7 +12,6 @@ import importlib.metadata
 import logging
 import platform
 import re
-import shutil
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -175,13 +174,18 @@ class BuildConfig:
         When true, any of appimagetool, the runtime file, or the Python
         archive that would otherwise be used unverified (no configured hash
         and no digest published by GitHub for that resolution path — e.g. a
-        ``PATH``-found or cached binary) aborts the build instead of
-        logging a warning and continuing.
+        cached binary) aborts the build instead of logging a warning and
+        continuing.
     require_zsyncmake : bool
-        When true, abort the build if ``update_info`` is set but
-        ``zsyncmake`` is not found on ``PATH`` — instead of logging a
-        warning and packaging an AppImage with no ``.zsync`` delta-update
-        file. Has no effect when ``update_info`` is empty.
+        When true, abort the build if ``update_info`` is set but appimagetool
+        didn't actually produce a ``.zsync`` delta-update file next to the
+        packaged AppImage — instead of logging a warning. Checked after
+        packaging, against the real output, not a prediction: appimagetool
+        bundles its own ``zsyncmake`` (its ``AppRun`` puts its own ``usr/bin``
+        first on ``PATH``, ahead of anything on the build host's), so this
+        normally succeeds regardless of what the build host has installed —
+        it only fires for a genuinely broken or unusually minimal
+        appimagetool build. Has no effect when ``update_info`` is empty.
     pylock : str
         Path to a PEP 751 ``pylock.toml`` file, relative to the project
         root, pinning every third-party runtime dependency to an exact
@@ -755,16 +759,6 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
             "[tool.appimage] — run 'init' to resolve and write it."
             for key in ("appimagetool_sha256", "runtime_sha256")
             if not getattr(config, key)
-        )
-
-    if config.update_info and not shutil.which("zsyncmake"):
-        zsyncmake_msg = (
-            "update_info is set but zsyncmake is not on PATH — no .zsync "
-            "delta-update file will be generated. Install the 'zsync' package "
-            "(provides zsyncmake), or unset update_info."
-        )
-        (package_errors if require_zsyncmake else package_warnings).append(
-            zsyncmake_msg,
         )
 
     if not config.pylock:

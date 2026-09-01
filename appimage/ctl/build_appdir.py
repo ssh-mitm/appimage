@@ -1,7 +1,9 @@
 # Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
 """The ``build-appdir`` subcommand: assemble the AppDir without packaging it."""
 
+import base64
 import csv
+import hashlib
 import importlib.resources
 import json
 import logging
@@ -91,6 +93,18 @@ def _generate_desktop(resolved: _ResolvedBuild, project_root: Path, dest: Path) 
 def _run_hook(script: str, project_root: Path, appdir: Path) -> None:
     """Execute a lifecycle hook script.
 
+    Same isolated environment as every other install subprocess here
+    (``PYTHONNOUSERSITE``/``PYTHONDONTWRITEBYTECODE``, see
+    ``_isolated_subprocess_env``), plus ``APPDIR``. Predates this project's
+    reproducibility work — added long before it, never revisited when that
+    landed elsewhere — but a hook is documented as running between install
+    steps specifically to edit the AppDir's installed packages
+    (``post_install``/``pre_package``), so anything it does through the
+    bundled interpreter is exactly as exposed to a host-side PEP 370 leak
+    as ``pip install`` itself was. The rest of the inherited environment
+    (``PATH`` etc.) stays untouched — a hook still needs real host tools to
+    do anything useful.
+
     Parameters
     ----------
     script : str
@@ -101,7 +115,7 @@ def _run_hook(script: str, project_root: Path, appdir: Path) -> None:
         AppDir path exposed to the hook as ``APPDIR``.
 
     """
-    env = {**os.environ, "APPDIR": str(appdir)}
+    env = {**_isolated_subprocess_env(), "APPDIR": str(appdir)}
     subprocess.run(  # noqa: S603  # nosec B603
         [str(project_root / script)],
         cwd=project_root,
@@ -192,10 +206,19 @@ def _install_from_pylock(
     because pip's hash-checking mode, once triggered by any ``--hash``
     in a requirement set, demands *every* requirement in that same
     invocation carry one — mixing the unhashed local project into the
-    ``--require-hashes`` call would fail outright. ``--no-deps`` on both
-    calls keeps each strictly to what it's given: the local install won't
-    reach past its own listed dependencies, and the lock install won't
-    silently pull in anything beyond what got hashed.
+    ``--require-hashes`` call would fail outright.
+
+    ``--no-deps`` on the local install keeps it strictly to what it's
+    given: it won't reach past its own listed dependencies, since those
+    are meant to come exclusively from the lock install below. The lock
+    install deliberately does *not* pass ``--no-deps``: leaving normal
+    dependency resolution on means pip still checks each locked package's
+    declared dependencies against what ``pylock.toml`` provides. If the
+    lock is incomplete (a generation bug, or ``pyproject.toml`` changed
+    without re-running ``lock``), resolution needs a candidate for the
+    missing package, finds none with a hash, and aborts loudly right here
+    — instead of installing a silently incomplete AppDir that only fails
+    with an import error when the built AppImage is actually run.
     """
     pylock_path = project_root / resolved.pylock
     if not pylock_path.exists():
@@ -218,7 +241,7 @@ def _install_from_pylock(
             *resolved.local_install_targets,
         ],
         cwd=project_root,
-        env=_no_bytecode_env(),
+        env=_isolated_subprocess_env(),
         check=True,
     )
 
@@ -230,13 +253,12 @@ def _install_from_pylock(
             "pip",
             "install",
             "--no-compile",
-            "--no-deps",
             "--require-hashes",
             "-r",
             str(pylock_path),
         ],
         cwd=project_root,
-        env=_no_bytecode_env(),
+        env=_isolated_subprocess_env(),
         check=True,
     )
 
@@ -288,21 +310,42 @@ def _resolve_appimage_pin_sha256(pin: str, *, strict: bool) -> str | None:
     return digest
 
 
-def _no_bytecode_env() -> dict[str, str]:
-    """Return an environment that stops the interpreter writing stray ``.pyc`` files.
+def _isolated_subprocess_env() -> dict[str, str]:
+    """Return an environment for every subprocess that installs into the AppDir.
 
-    Merely *importing* a stdlib module during ``pip install`` (pip and
-    build backends both import plenty) is enough for CPython to write a
-    fresh, timestamp-invalidated ``.pyc`` for it if none already validates
-    — outside ``site-packages``, so ``_compile_pyc``'s own recompilation
-    pass never reaches or fixes it. Such a stray ``.pyc`` embeds the
-    absolute path it was compiled from (``co_filename``), which bakes the
-    build machine's directory structure — and with it, typically, the
-    building user's name — into the shipped AppImage. Every subprocess
-    that runs the bundled interpreter for an install gets this in its
-    environment so none of them can write one in the first place.
+    Two independent host leaks, closed together because every install
+    subprocess needs both:
+
+    - ``PYTHONDONTWRITEBYTECODE=1``: merely *importing* a stdlib module
+      during ``pip install`` (pip and build backends both import plenty)
+      is enough for CPython to write a fresh, timestamp-invalidated
+      ``.pyc`` for it if none already validates — outside
+      ``site-packages``, so ``_compile_pyc``'s own recompilation pass
+      never reaches or fixes it. Such a stray ``.pyc`` embeds the
+      absolute path it was compiled from (``co_filename``), which bakes
+      the build machine's directory structure — and with it, typically,
+      the building user's name — into the shipped AppImage.
+    - ``PYTHONNOUSERSITE=1``: without it, pip resolves against the
+      *build user's* ``~/.local/lib/pythonX.Y/site-packages`` too (PEP
+      370) in addition to the bundled interpreter's own site-packages.
+      If that happens to already satisfy a requirement — any unrelated
+      Python install on the build host, not just this AppDir's — pip
+      silently skips installing it into the AppDir at all: "Requirement
+      already satisfied" instead of "Collecting". The AppDir then ships
+      without that package, and the built AppImage fails at runtime with
+      ``ModuleNotFoundError`` on a host where the build user's home
+      directory doesn't happen to carry the same leftover package —
+      while looking, on the build host itself, exactly like a successful
+      build. Confirmed by hand: a build on a machine with an unrelated
+      ``typing_extensions`` already installed under ``~/.local`` silently
+      omitted it from the AppDir entirely, in a project that has it as a
+      real, needed dependency.
+
+    Every subprocess that runs the bundled interpreter for an install —
+    ``pip install`` or ``pip lock`` alike — gets this environment so none
+    of them can reintroduce either leak.
     """
-    return {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    return {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
 
 
 def _install_hashed_requirement(
@@ -343,7 +386,7 @@ def _install_hashed_requirement(
                 req_file.name,
             ],
             cwd=project_root,
-            env=_no_bytecode_env(),
+            env=_isolated_subprocess_env(),
             check=True,
         )
 
@@ -393,7 +436,7 @@ def _install_targets(
             *targets,
         ],
         cwd=project_root,
-        env=_no_bytecode_env(),
+        env=_isolated_subprocess_env(),
         check=True,
     )
 
@@ -478,7 +521,7 @@ def _compile_pyc(resolved: _ResolvedBuild, appdir: Path) -> None:
             str(site_packages),
             str(site_packages),
         ],
-        env=_no_bytecode_env(),
+        env=_isolated_subprocess_env(),
         check=True,
     )
 
@@ -492,8 +535,111 @@ def _find_build_path_leaks(appdir: Path, marker: bytes) -> list[Path]:
     ]
 
 
+def _self_locating_python(python_bin_name: bytes) -> bytes:
+    """Return a POSIX-sh expression that finds *python_bin_name* next to the running script.
+
+    Same pattern python-build-standalone's own bootstrap ``pip``/``pip3``
+    scripts already use for exactly this reason — confirmed by hand: still
+    runs correctly after moving the whole AppDir to an unrelated path,
+    since ``dirname``/``realpath`` resolve relative to ``$0`` (the script's
+    own, current location on disk) rather than the absolute path it
+    happened to be installed at. Not a pip/distlib feature — pip's own
+    script generator (``pip._vendor.distlib.scripts.ScriptMaker``) always
+    writes a plain, non-relocatable absolute path; python-build-standalone
+    applies this trick itself, only to its own bundled scripts.
+    """
+    return b'"$(dirname -- "$(realpath -- "$0")")/' + python_bin_name + b'"'
+
+
+def _relocate_console_script(content: bytes, executable: bytes) -> bytes | None:
+    """Rewrite a pip-generated console-script shim to find its interpreter relative to itself.
+
+    Matches exactly the two shebang forms ``pip._vendor.distlib.scripts.
+    ScriptMaker._build_shebang`` ever produces for a POSIX target — a plain
+    ``#!<executable>`` when short enough, otherwise a two-line ``#!/bin/sh``
+    + polyglot ``exec`` fallback (triggered past 127 bytes on Linux, 512 on
+    macOS; an AppDir path is long enough that the fallback is the common
+    case in practice). Returns ``None``, deferring to deletion, for
+    anything that doesn't match either byte-for-byte — deliberately
+    narrow rather than a loose regex: virtualenv shipped a general-purpose
+    ``--relocatable`` doing the analogous rewrite for years and eventually
+    removed it (unreliable, mainly around compiled-code packages — see
+    https://github.com/pypa/virtualenv/issues/90) — better to fall back to
+    the always-safe delete than to guess at a format distlib didn't
+    actually write and risk producing a script that's broken in a new way.
+
+    Parameters
+    ----------
+    content : bytes
+        The shim file's current content.
+    executable : bytes
+        The absolute interpreter path distlib embedded (what installed it,
+        e.g. ``.../AppDir/python/bin/python3``) — must match exactly for
+        either pattern to be recognized.
+
+    Returns
+    -------
+    bytes | None
+        The rewritten content, or ``None`` if *content* doesn't match a
+        known shim format exactly.
+
+    """
+    python_bin_name = executable.rsplit(b"/", 1)[-1]
+    replacement = _self_locating_python(python_bin_name)
+
+    two_line = b"#!/bin/sh\n'''exec' " + executable + b' "$0" "$@"\n' + b"' '''\n"
+    if content.startswith(two_line):
+        new_prefix = (
+            b"#!/bin/sh\n'''exec' " + replacement + b' "$0" "$@"\n' + b"' '''\n"
+        )
+        return new_prefix + content[len(two_line) :]
+
+    one_line = b"#!" + executable + b"\n"
+    if content.startswith(one_line):
+        return b"#!" + replacement + b"\n" + content[len(one_line) :]
+
+    return None
+
+
+def _record_hash_field(content: bytes) -> str:
+    """Return a RECORD-format hash field (``sha256=<urlsafe-base64-no-padding>``) for *content*."""
+    digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
+    return f"sha256={digest.decode()}"
+
+
+def _scrub_record_row(
+    target: Path,
+    row: list[str],
+    appdir_marker: bytes,
+    executable: bytes,
+) -> list[str] | None:
+    """Handle one RECORD row for ``_scrub_build_paths``: delete, relocate, or keep as-is.
+
+    Returns the row to keep (unchanged, or rewritten with a relocated
+    file's new hash/size), or ``None`` if *target* was deleted.
+    """
+    if not (target.is_file() and not target.is_symlink()):
+        return row
+
+    if target.name == "direct_url.json":
+        target.unlink()
+        return None
+
+    content = target.read_bytes()
+    if appdir_marker not in content:
+        return row
+
+    relocated = _relocate_console_script(content, executable)
+    if relocated is None:
+        target.unlink()
+        return None
+
+    target.write_bytes(relocated)
+    return [row[0], _record_hash_field(relocated), str(len(relocated))]
+
+
 def _scrub_build_paths(resolved: _ResolvedBuild, appdir: Path) -> None:
-    """Remove the build machine's absolute path from install-time artifacts.
+    """Remove or fix up the build machine's absolute path in install-time artifacts.
 
     ``pip`` writes two kinds of file that embed the absolute path it ran
     from — which varies by machine, checkout location, and (via the home
@@ -501,22 +647,34 @@ def _scrub_build_paths(resolved: _ResolvedBuild, appdir: Path) -> None:
     business ending up in a shipped, redistributable AppImage:
 
     - Each local install's ``direct_url.json`` (PEP 610), recording the
-      ``file://`` source URL it was installed from.
+      ``file://`` source URL it was installed from. Always deleted: its
+      entire purpose is recording *where this came from*, which for an
+      AppDir that runs somewhere else entirely isn't just leaked, it's
+      meaningless — there's no relocatable version of "the build-time
+      path", and nothing reads this file at AppImage runtime.
     - Every console-script shim pip generates for an entry point, whose
       shebang embeds the absolute path to the bundled interpreter (on
       *some* line — pip falls back to a two-line ``#!/bin/sh`` + exec
       trick once the interpreter path is too long for the OS's shebang
-      limit, so which line varies).
+      limit, so which line varies). Unlike ``direct_url.json``, these are
+      relocated in place (see ``_relocate_console_script``) rather than
+      deleted, so e.g. ``AppDir/python/bin/<entry-point>`` still works for
+      anyone poking at an extracted AppDir directly — deleted only as a
+      fallback if the shim doesn't match a recognized pip/distlib format
+      exactly.
 
-    ``AppRun`` never runs either of these — it execs the bundled
-    interpreter directly (see ``templates/AppRun.sh``) — so both are
-    safe to delete outright rather than neutralized in place. Which
-    files exist to delete is read from each ``RECORD`` — the same
-    manifest pip itself wrote when it installed that file — rather than
-    inferred by matching against pip's script format, so a future pip
-    version changing that format doesn't silently defeat this: any
-    RECORD-listed file that still contains the build path once inspected
-    gets removed, whatever it looks like.
+    ``AppRun`` never runs either kind of file itself — it execs the
+    bundled interpreter directly (see ``templates/AppRun.sh``) — so
+    neither is required for the AppImage to work; relocating the scripts
+    is for the benefit of anyone using the AppDir directly, not something
+    this build depends on. Which files to look at is read from each
+    ``RECORD`` — the same manifest pip itself wrote when it installed that
+    file — rather than inferred by matching against pip's script format,
+    so a future pip version changing that format doesn't silently defeat
+    this: any RECORD-listed file that still contains the build path once
+    inspected gets handled, whatever it looks like. A relocated file's
+    ``RECORD`` entry is rewritten with its new hash/size rather than left
+    stale, matching what pip itself would have written for that content.
 
     Run late, after ``_compile_pyc``: a ``post_install``/``pre_package``
     hook installing something of its own could produce either artifact
@@ -543,6 +701,7 @@ def _scrub_build_paths(resolved: _ResolvedBuild, appdir: Path) -> None:
         appdir / "python" / "lib" / f"python{resolved.python}" / "site-packages"
     )
     appdir_marker = str(appdir).encode()
+    executable = str(appdir / "python" / "bin" / "python3").encode()
 
     if site_packages.is_dir():
         for dist_info in sorted(site_packages.glob("*.dist-info")):
@@ -558,16 +717,13 @@ def _scrub_build_paths(resolved: _ResolvedBuild, appdir: Path) -> None:
                 if not row:
                     continue
                 target = (site_packages / row[0]).resolve()
-                is_direct_url = target.name == "direct_url.json"
-                if (
-                    target.is_file()
-                    and not target.is_symlink()
-                    and (is_direct_url or appdir_marker in target.read_bytes())
-                ):
-                    target.unlink()
+                kept_row = _scrub_record_row(target, row, appdir_marker, executable)
+                if kept_row is None:
                     changed = True
                     continue
-                new_rows.append(row)
+                if kept_row != row:
+                    changed = True
+                new_rows.append(kept_row)
 
             if changed:
                 with record_path.open("w", newline="", encoding="utf-8") as f:

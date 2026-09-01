@@ -12,7 +12,7 @@ from typing import Final
 from appimage.ctl._base import BuildConfig, _ResolvedBuild
 from appimage.ctl._python import _install_python, _pip_version
 from appimage.ctl._toml import _toml_value
-from appimage.ctl.build_appdir import _no_bytecode_env, _resolve_for_appdir
+from appimage.ctl.build_appdir import _isolated_subprocess_env, _resolve_for_appdir
 
 _log: Final = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _run_pip_lock(
     subprocess.run(  # noqa: S603  # nosec B603
         cmd,
         cwd=project_root,
-        env=_no_bytecode_env(),
+        env=_isolated_subprocess_env(),
         check=True,
     )
     _log.info("Done: %s", output_path)

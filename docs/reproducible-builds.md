@@ -142,17 +142,137 @@ even with everything else already correct:
    by compiling with `-s <site-packages>` to strip the path from every
    code object, `PYTHONDONTWRITEBYTECODE=1` on every subprocess that runs
    the bundled interpreter so nothing gets compiled outside that
-   controlled step in the first place, and deleting the two pip artifacts
+   controlled step in the first place, and handling the two pip artifacts
    (discovered via each package's own `RECORD` — the same manifest pip
    wrote when installing it — rather than by guessing at pip's script
-   format, since that format has more than one variant in practice). A
-   final sweep of the whole AppDir for the build path, after all of the
-   above, turns "did this actually work" into something the build itself
-   verifies on every run rather than something that has to be checked by
-   hand.
+   format, since that format has more than one variant in practice):
+   `direct_url.json` is deleted (it exists only to record *where this came
+   from*, meaningless for an AppDir that runs somewhere else entirely, and
+   nothing reads it at runtime), while console-script shims are relocated
+   in place instead — their shebang rewritten to find the bundled
+   interpreter relative to their own location on disk (the same trick
+   python-build-standalone's own bundled `pip` already uses) rather than
+   deleted outright, so `AppDir/python/bin/<entry-point>` keeps working
+   for anyone using the AppDir directly. A final sweep of the whole AppDir
+   for the build path, after all of the above, turns "did this actually
+   work" into something the build itself verifies on every run rather than
+   something that has to be checked by hand.
 
 See [internals.md](internals.md) for exactly where each of these fits in
 the build sequence.
+
+## Classic appimagetool detected
+
+`appimage.ctl` resolves appimagetool in this order: an explicit
+`appimagetool` config path, then `PATH`, then its own build cache, and
+only then a fresh download (see ["The packer itself" above](#why-this-is-hard),
+item 3).
+
+**This is the exception, not the rule.** A project that never sets
+`appimagetool` and whose build host never happened to have one on `PATH`
+always takes the fourth branch — a verified download of the current
+[`AppImage/appimagetool`](https://github.com/AppImage/appimagetool)
+default, cached for next time. That cached copy is safe on every later
+build too: nothing but this project's own download step ever writes to
+it, so once it holds a verified download, it stays one. The check exists
+for exactly two situations where a *different* binary enters the picture:
+
+- **Unintentional:** something else on the build host already put an
+  `appimagetool` on `PATH` — plausibly the classic, unmaintained
+  `AppImageKit` build, since that's what most generic AppImage tutorials
+  install. Common on a developer's own machine, less likely on a
+  from-scratch CI runner.
+- **Intentional:** `appimagetool` is explicitly set in `[tool.appimage]`,
+  typically for an offline/air-gapped build (see below) — worth double
+  checking it's actually pointing at an `AppImage/appimagetool` build, not
+  a copy of the classic one someone grabbed years ago.
+
+Either way, pinning `appimagetool_sha256` doesn't protect against this: it
+only proves the same file is used every time, not that it's the *right*
+file — the classic build's non-deterministic `mksquashfs` (see item 3)
+would still produce a different `.AppImage` on every run, just with a
+build that "successfully" verifies its own hash each time. So the build
+aborts instead of just warning when the resolved binary looks like the
+classic build — based on debug-info strings from its own source tree
+still present in the binary, or (if those were stripped) its `--version`
+banner's own wording. Neither signal is airtight on its own, which is
+exactly why the abort happens instead of a best-effort guess being
+trusted silently.
+
+**Fix — network available (the common case):** stop pointing at the
+classic build and let `appimage.ctl` fetch the right one itself, no
+manual download needed.
+
+- If it's on `PATH` (`which appimagetool`), remove or rename it, or move
+  it later in `PATH` than wherever you want a real resolution to come
+  from.
+- If it's in the build cache (`<build_dir>/appimagetool-<arch>.AppImage`),
+  delete that file — this shouldn't normally happen (see above), but if
+  it was seeded by hand, deleting it makes the next build download a
+  fresh, correct one.
+- If `appimagetool` is set explicitly in `[tool.appimage]`, either unset
+  it (falls through to `PATH`/cache/download) or point it at a real
+  `AppImage/appimagetool` build (see below).
+
+Then rerun `init` (or just the build) to re-resolve and re-pin
+`appimagetool_sha256` against the correct binary.
+
+**Fix — offline/air-gapped:** download the right asset yourself from
+[the `AppImage/appimagetool` releases page](https://github.com/AppImage/appimagetool/releases)
+— the `continuous` release's `appimagetool-<arch>.AppImage` (`<arch>` is
+`x86_64`, `aarch64`, or `armhf`; the GitHub API's own published sha256 for
+that asset is what a networked build would auto-verify against). Then
+either:
+
+- place it at `<build_dir>/appimagetool-<arch>.AppImage` so it resolves as
+  a cache hit, or
+- set `appimagetool = "path/to/appimagetool"` in `[tool.appimage]`
+  explicitly.
+
+Either way, also set `appimagetool_sha256` to that asset's published
+digest so it's verified rather than merely trusted — `check` prints a
+warning naming the actual hash it resolved if this is left unset.
+
+## Zsync and the build host PATH
+
+`update_info`/`require_zsyncmake` used to work like this: before packaging,
+check whether `zsyncmake` is on the *build host's* `PATH`; warn (or, under
+`require_zsyncmake`, abort) if it isn't. That check was wrong, in the same
+way — and for the same underlying reason — as [the classic appimagetool
+detection above](#classic-appimagetool-detected): it asked about the
+*host's* `PATH`, when what actually determines whether a `.zsync` file
+gets produced is entirely internal to appimagetool itself.
+
+appimagetool's own `AppRun` does this:
+
+```sh
+this_dir="$(dirname -- "$(readlink -f -- "$0")")"
+export PATH="$this_dir"/usr/bin:"$PATH"
+exec "$this_dir"/usr/bin/appimagetool "$@"
+```
+
+— it bundles its own `zsyncmake` right next to `mksquashfs` in its own
+`usr/bin`, and puts that directory *first* on `PATH` before running the
+real binary. appimagetool's own C source then does a plain PATH lookup
+(`g_find_program_in_path("zsyncmake")`) to decide whether to generate a
+`.zsync` file — which, because of the `AppRun` above, finds appimagetool's
+*own* bundled copy first, regardless of whether the build host has
+`zsyncmake` installed separately or not. Confirmed by hand: extracting and
+running the bundled `usr/bin/zsyncmake` directly, on a host with no system
+`zsyncmake` at all, produces a valid `.zsync` file with no network access
+and no dependency on anything outside the appimagetool download itself.
+
+So `.zsync` generation was already self-contained and host-independent —
+the old PATH check just asked the wrong question and produced a
+false warning (or, under `require_zsyncmake`/`--reproducible`, a false
+*abort*) on any build host that didn't happen to have a *separate* system
+`zsyncmake` installed, even though the actual build would have succeeded
+and produced a correct `.zsync` file regardless. Fixed by checking the
+real, deterministic outcome instead: after packaging, whether
+`<dist_dir>/<app>-<arch>.AppImage.zsync` actually exists. The only way
+this still fails is a genuinely unusual `appimagetool` (a hand-built copy
+without a bundled `zsyncmake`, explicitly configured via `appimagetool` in
+`[tool.appimage]`) — not the build host's own installed packages.
 
 ## Verify it yourself
 

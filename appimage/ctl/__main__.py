@@ -70,7 +70,7 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="PATH",
         help=(
             "Path to a local appimagetool binary. "
-            "When omitted, PATH is searched, then the build cache, then a download."
+            "When omitted, the build cache is checked, then a download."
         ),
     )
     parser.add_argument(
@@ -163,9 +163,8 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
         dest="require_zsyncmake",
         action="store_true",
         help=(
-            "Abort the build if update_info is set but zsyncmake is not on "
-            "PATH (no .zsync delta-update file would be generated), instead "
-            "of just warning."
+            "Abort the build if update_info is set but appimagetool didn't "
+            "produce a .zsync delta-update file, instead of just warning."
         ),
     )
     parser.add_argument(

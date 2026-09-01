@@ -41,7 +41,7 @@ one applies):
 | `--extras EXTRA` | Override extras to install (e.g. `production`). May be repeated. |
 | `--package TARGET` | Additional pip install target. May be repeated. |
 | `--project-dir PATH` | Path to the project root (default: current directory). |
-| `--appimagetool PATH` | Path to a local appimagetool binary. Skips PATH lookup and download. |
+| `--appimagetool PATH` | Path to a local appimagetool binary. Skips the build cache and download — `PATH` itself is never searched, see [Classic appimagetool detected](reproducible-builds.md#classic-appimagetool-detected). |
 | `--appimagetool-version LABEL` | Informational label for the pinned appimagetool build. |
 | `--appimagetool-sha256 SHA256` | Expected sha256 of the appimagetool binary, verified regardless of how it was resolved. |
 | `--python-archive PATH` | Path to a local python-build-standalone tarball. Skips the download. |
@@ -49,7 +49,7 @@ one applies):
 | `--runtime-file PATH` | Path to a local AppImage runtime ELF stub, passed to appimagetool as `--runtime-file`. Skips the download. |
 | `--runtime-sha256 SHA256` | Expected sha256 of the runtime file, verified regardless of how it was resolved. |
 | `--verify-downloads` | Abort the build instead of warning whenever appimagetool, the runtime file, or the Python archive would otherwise be used unverified. |
-| `--require-zsyncmake` | Abort the build instead of warning when `update_info` is set but `zsyncmake` is not on `PATH`. |
+| `--require-zsyncmake` | Abort the build instead of warning when `update_info` is set but appimagetool didn't produce a `.zsync` file (checked after packaging, against the real output — see [Configuration](configuration.md#build-options)). |
 | `--pylock PATH` | Path to a hash-pinned `pylock.toml` for third-party dependencies. Generate it with `lock`. |
 | `--require-pylock` | Abort the build instead of warning when `pylock` is not set. |
 | `--build-pylock PATH` | Path to a hash-pinned pylock-format file constraining the packaged project's own `[build-system].requires`. Converted to a classic hash-pinned constraints file and passed as `pip install --build-constraint` when installing the project itself, so pip's isolated build environment is hash-verified too. Generate it with `lock`, alongside `pylock.toml`. |

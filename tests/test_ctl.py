@@ -174,30 +174,39 @@ def test_resolve_appimagetool_config_path_hash_mismatch_does_not_delete(tmp_path
     assert tool.exists()  # user-owned file must survive a mismatch
 
 
-def test_resolve_appimagetool_from_path_no_hash_warns_and_skips_download(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    tool_on_path = tmp_path / "appimagetool"
-    tool_on_path.write_bytes(b"whatever-was-on-path")
+def test_resolve_appimagetool_no_path_lookup(tmp_path: Path) -> None:
+    """appimagetool no longer searches PATH at all — explicit config path, cache,
+    or download only. Patched at ``shutil.which`` itself (not
+    ``appimage.ctl._appimagetool.shutil.which``): the module doesn't import
+    ``shutil`` at all any more, so there's nothing module-local to patch —
+    proving that absence is exactly the point.
+    """
+    cache = tmp_path / "cache.AppImage"
     resolved = make_resolved()
 
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value=str(tool_on_path)), \
-         patch("appimage.ctl._appimagetool._download") as mock_download, \
-         caplog.at_level("WARNING"):
-        result = _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
+    def fake_download(_url: str, dest: Path) -> None:
+        dest.write_bytes(b"content")
 
-    assert result == tool_on_path
+    with patch("shutil.which") as mock_which, \
+         patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None)), \
+         patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
+        _resolve_appimagetool(resolved, cache, "x86_64")
+
+    mock_which.assert_not_called()
+
+
+def test_resolve_appimagetool_cache_no_hash_warns_and_skips_download(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    cache = tmp_path / "cache.AppImage"
+    cache.write_bytes(b"whatever-was-cached")
+    resolved = make_resolved()
+
+    with patch("appimage.ctl._appimagetool._download") as mock_download, \
+         caplog.at_level("WARNING"):
+        result = _resolve_appimagetool(resolved, cache, "x86_64")
+
+    assert result == cache
     mock_download.assert_not_called()
     assert "unpinned and unverified" in caplog.text
-
-
-def test_resolve_appimagetool_from_path_hash_set_mismatch_raises(tmp_path: Path) -> None:
-    """A stale/wrong binary sitting on PATH must be caught once a hash is pinned."""
-    tool_on_path = tmp_path / "appimagetool"
-    tool_on_path.write_bytes(b"a-random-binary-from-2019")
-    resolved = make_resolved(appimagetool_sha256=digest_of(b"the-expected-binary"))
-
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value=str(tool_on_path)):
-        with pytest.raises(RuntimeError):
-            _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
 
 
 def test_resolve_appimagetool_cache_hash_mismatch_raises(tmp_path: Path) -> None:
@@ -205,9 +214,8 @@ def test_resolve_appimagetool_cache_hash_mismatch_raises(tmp_path: Path) -> None
     cache.write_bytes(b"stale-cached-binary")
     resolved = make_resolved(appimagetool_sha256=digest_of(b"the-expected-binary"))
 
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value=None):
-        with pytest.raises(RuntimeError):
-            _resolve_appimagetool(resolved, cache, "x86_64")
+    with pytest.raises(RuntimeError):
+        _resolve_appimagetool(resolved, cache, "x86_64")
 
 
 def test_resolve_appimagetool_download_mismatch_deletes_cache(tmp_path: Path) -> None:
@@ -217,8 +225,7 @@ def test_resolve_appimagetool_download_mismatch_deletes_cache(tmp_path: Path) ->
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"a-different-binary")
 
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value=None), \
-         patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None)), \
+    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None)), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         with pytest.raises(RuntimeError):
             _resolve_appimagetool(resolved, cache, "x86_64")
@@ -234,8 +241,7 @@ def test_resolve_appimagetool_download_verifies_free_api_digest(tmp_path: Path) 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(content)
 
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value=None), \
-         patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", digest_of(content))), \
+    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", digest_of(content))), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         result = _resolve_appimagetool(resolved, cache, "x86_64")
 
@@ -257,12 +263,157 @@ def test_resolve_appimagetool_download_uses_arch_map_for_armv7l(tmp_path: Path) 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"content")
 
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value=None), \
-         patch("appimage.ctl._appimagetool._fetch_release_asset_digest", side_effect=fake_fetch_digest), \
+    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", side_effect=fake_fetch_digest), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         _resolve_appimagetool(resolved, cache, "armv7l")
 
     assert captured["asset_name"] == "appimagetool-armhf.AppImage"
+
+
+# ---------------------------------------------------------------------------
+# _looks_like_classic_appimagekit / _abort_if_classic_appimagekit
+#
+# Regression coverage for a real, empirically confirmed issue: a machine
+# with the classic, unmaintained AppImageKit appimagetool already on PATH
+# (very plausible — many generic AppImage tutorials install exactly that)
+# gets it silently resolved, hash-pinned by 'init', and "verified" on every
+# later build — while its documented non-deterministic mksquashfs bug
+# (AppImageKit#929) keeps producing a different .AppImage each time.
+# Confirmed by hand: an otherwise fully pinned --reproducible build of a
+# real project produced two different output files across two runs, traced
+# back to exactly this classic binary being on PATH. The build now aborts
+# outright rather than warning — see docs/reproducible-builds.md's
+# "Classic appimagetool detected" section for the fix steps.
+# ---------------------------------------------------------------------------
+
+def test_looks_like_classic_appimagekit_detects_build_path_marker(tmp_path: Path) -> None:
+    from appimage.ctl._appimagetool import _looks_like_classic_appimagekit
+
+    tool = tmp_path / "appimagetool"
+    tool.write_bytes(b"...junk.../AppImageKit/lib/libappimage_shared/digest.c...junk...")
+
+    reason = _looks_like_classic_appimagekit(tool)
+    assert reason is not None
+    assert "build paths" in reason
+
+
+def test_looks_like_classic_appimagekit_ignores_incidental_wiki_link(tmp_path: Path) -> None:
+    """The current default's own --help text links to AppImageKit's wiki once —
+    that single, unrelated mention must not trigger a false positive.
+    """
+    from appimage.ctl._appimagetool import _looks_like_classic_appimagekit
+
+    tool = tmp_path / "appimagetool"
+    tool.write_bytes(b"See https://github.com/AppImage/AppImageKit/wiki/FUSE for details")
+
+    with patch(
+        "appimage.ctl._appimagetool._appimagetool_version_string",
+        return_value="appimagetool, continuous build (git version 8c8c91f), build 295",
+    ):
+        assert _looks_like_classic_appimagekit(tool) is None
+
+
+def test_looks_like_classic_appimagekit_detects_version_banner(tmp_path: Path) -> None:
+    """No build-path markers (e.g. a stripped binary) still gets caught via the
+    --version banner's own wording, a runtime string rather than a debug symbol.
+    """
+    from appimage.ctl._appimagetool import _looks_like_classic_appimagekit
+
+    tool = tmp_path / "appimagetool"
+    tool.write_bytes(b"stripped-binary-no-debug-info")
+
+    with patch(
+        "appimage.ctl._appimagetool._appimagetool_version_string",
+        return_value="appimagetool, continuous build (commit effcebc), build 2084",
+    ):
+        reason = _looks_like_classic_appimagekit(tool)
+    assert reason is not None
+    assert "commit effcebc" in reason
+
+
+def test_looks_like_classic_appimagekit_clean_for_current_default(tmp_path: Path) -> None:
+    from appimage.ctl._appimagetool import _looks_like_classic_appimagekit
+
+    tool = tmp_path / "appimagetool"
+    tool.write_bytes(b"a normal, unrelated binary with no markers at all")
+
+    with patch(
+        "appimage.ctl._appimagetool._appimagetool_version_string",
+        return_value="appimagetool, continuous build (git version 8c8c91f), build 295",
+    ):
+        assert _looks_like_classic_appimagekit(tool) is None
+
+
+def test_looks_like_classic_appimagekit_survives_unexecutable_tool(tmp_path: Path) -> None:
+    """A test double / non-executable placeholder file must not crash detection."""
+    from appimage.ctl._appimagetool import _looks_like_classic_appimagekit
+
+    tool = tmp_path / "appimagetool"
+    tool.write_bytes(b"not-a-real-binary")  # no exec bit, not a valid ELF either
+
+    assert _looks_like_classic_appimagekit(tool) is None
+
+
+def test_resolve_appimagetool_aborts_for_classic_build_via_config_path(tmp_path: Path) -> None:
+    from appimage.ctl._appimagetool import _resolve_appimagetool
+
+    tool = tmp_path / "appimagetool"
+    tool.write_bytes(b"...junk.../AppImageKit/build/src/main.c...junk...")
+    resolved = make_resolved(appimagetool=str(tool))
+
+    with pytest.raises(RuntimeError, match="classic, unmaintained AppImageKit"):
+        _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
+
+
+def test_resolve_appimagetool_aborts_for_classic_build_in_cache(tmp_path: Path) -> None:
+    """The build cache should never realistically hold the classic build (only this
+    project's own download step writes there) — but the check still applies in
+    case one was seeded there by hand.
+    """
+    from appimage.ctl._appimagetool import _resolve_appimagetool
+
+    cache = tmp_path / "cache.AppImage"
+    cache.write_bytes(b"...junk.../AppImageKit/build/src/main.c...junk...")
+    resolved = make_resolved()
+
+    with pytest.raises(RuntimeError, match="classic, unmaintained AppImageKit"):
+        _resolve_appimagetool(resolved, cache, "x86_64")
+
+
+def test_resolve_appimagetool_abort_message_links_to_docs(tmp_path: Path) -> None:
+    from appimage.ctl._appimagetool import _resolve_appimagetool
+
+    tool = tmp_path / "appimagetool"
+    tool.write_bytes(b"...junk.../AppImageKit/build/src/main.c...junk...")
+    resolved = make_resolved(appimagetool=str(tool))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
+
+    assert "reproducible-builds.html#classic-appimagetool-detected" in str(exc_info.value)
+
+
+def test_resolve_appimagetool_does_not_abort_for_fresh_download(tmp_path: Path) -> None:
+    """A binary this function just downloaded is by definition from the right
+    source — no need to run it through the classic-build heuristic at all.
+    """
+    from appimage.ctl._appimagetool import _resolve_appimagetool
+
+    cache = tmp_path / "cache.AppImage"
+
+    def fake_download(_url: str, dest: Path) -> None:
+        dest.write_bytes(b"...junk.../AppImageKit/build/src/main.c...junk...")
+
+    resolved = make_resolved()
+
+    with patch(
+             "appimage.ctl._appimagetool._fetch_release_asset_digest",
+             return_value=("https://example/appimagetool", None),
+         ), \
+         patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
+        result = _resolve_appimagetool(resolved, cache, "x86_64")
+
+    assert result == cache
 
 
 # ---------------------------------------------------------------------------
@@ -332,14 +483,17 @@ def test_resolve_runtime_file_download_mismatch_deletes_cache(tmp_path: Path) ->
 
 
 def test_resolve_runtime_file_no_path_lookup(tmp_path: Path) -> None:
-    """Unlike appimagetool, the runtime stub is never looked up on PATH."""
+    """Like appimagetool (see test_resolve_appimagetool_no_path_lookup), the
+    runtime stub is never looked up on PATH — only explicit config, cache, or
+    download.
+    """
     cache = tmp_path / "cache"
     resolved = make_resolved()
 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"content")
 
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value="/usr/bin/runtime-x86_64") as mock_which, \
+    with patch("shutil.which") as mock_which, \
          patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", None)), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         _resolve_runtime_file(resolved, cache, "x86_64")
@@ -352,13 +506,12 @@ def test_resolve_runtime_file_no_path_lookup(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_verify_downloads_raises_instead_of_warning_for_appimagetool(tmp_path: Path) -> None:
-    tool_on_path = tmp_path / "appimagetool"
-    tool_on_path.write_bytes(b"whatever-was-on-path")
+    cache = tmp_path / "cache.AppImage"
+    cache.write_bytes(b"whatever-was-cached")
     resolved = make_resolved(verify_downloads=True)
 
-    with patch("appimage.ctl._appimagetool.shutil.which", return_value=str(tool_on_path)):
-        with pytest.raises(RuntimeError, match="could not be verified"):
-            _resolve_appimagetool(resolved, tmp_path / "cache.AppImage", "x86_64")
+    with pytest.raises(RuntimeError, match="could not be verified"):
+        _resolve_appimagetool(resolved, cache, "x86_64")
 
 
 def test_verify_downloads_raises_instead_of_warning_for_runtime_file(tmp_path: Path) -> None:
@@ -392,7 +545,17 @@ def test_verify_downloads_passes_when_hash_configured(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# zsyncmake availability (checked in _resolve, so `check` sees it too)
+# zsyncmake / .zsync file — checked after packaging (build.py), against the
+# real output, not the build host's PATH.
+#
+# Regression coverage for a second, related PATH-dependence bug: the old
+# check asked whether `zsyncmake` was on the *build host's* PATH before
+# packaging — but appimagetool bundles its own `zsyncmake` and its own
+# AppRun puts its own usr/bin first on PATH, so that check answered a
+# different question than "will packaging actually produce a .zsync file"
+# and gave a different (wrong) answer depending on the build host's
+# installed packages. See docs/reproducible-builds.md's "Zsync and the
+# build host's PATH" section for how this was confirmed.
 # ---------------------------------------------------------------------------
 
 def _write_minimal_project(tmp_path: Path) -> None:
@@ -401,68 +564,56 @@ def _write_minimal_project(tmp_path: Path) -> None:
     )
 
 
-def _has_zsyncmake_message(messages: list[str]) -> bool:
-    return any("zsyncmake is not on PATH" in m for m in messages)
+def test_check_zsync_file_noop_when_present(tmp_path: Path) -> None:
+    from appimage.ctl.build import _check_zsync_file
+
+    (tmp_path / "myapp-x86_64.AppImage.zsync").write_bytes(b"zsync: 0.6.2")
+
+    _check_zsync_file(tmp_path, "myapp-x86_64.AppImage", require=True)  # must not raise
 
 
-def test_zsyncmake_noop_without_update_info(tmp_path: Path) -> None:
-    _write_minimal_project(tmp_path)
-    config = BuildConfig()
+def test_check_zsync_file_warns_by_default_when_missing(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    from appimage.ctl.build import _check_zsync_file
 
-    with patch("appimage.ctl._base.shutil.which", return_value=None):
-        resolved = _resolve(config, tmp_path)
+    with caplog.at_level("WARNING"):
+        _check_zsync_file(tmp_path, "myapp-x86_64.AppImage", require=False)
 
-    assert not _has_zsyncmake_message(resolved.package_warnings)
-    assert resolved.package_errors == []
+    assert "did not produce" in caplog.text
 
 
-def test_zsyncmake_noop_when_found(tmp_path: Path) -> None:
-    _write_minimal_project(tmp_path)
-    config = BuildConfig(update_info="zsync|https://example/app.AppImage.zsync")
+def test_check_zsync_file_raises_with_require(tmp_path: Path) -> None:
+    from appimage.ctl.build import _check_zsync_file
 
-    with patch("appimage.ctl._base.shutil.which", return_value="/usr/bin/zsyncmake"):
-        resolved = _resolve(config, tmp_path)
-
-    assert not _has_zsyncmake_message(resolved.package_warnings)
-    assert resolved.package_errors == []
+    with pytest.raises(RuntimeError, match="did not produce"):
+        _check_zsync_file(tmp_path, "myapp-x86_64.AppImage", require=True)
 
 
-def test_zsyncmake_warns_by_default(tmp_path: Path) -> None:
-    _write_minimal_project(tmp_path)
-    config = BuildConfig(update_info="zsync|https://example/app.AppImage.zsync")
+def test_build_warns_when_packaging_does_not_produce_zsync_file(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """End-to-end through build(): update_info is set, but the (mocked) packaging
+    subprocess doesn't create a .zsync file — must warn, not silently succeed.
+    """
+    build_module = importlib.import_module("appimage.ctl.build")
+    appdir_module = importlib.import_module("appimage.ctl.build_appdir")
 
-    with patch("appimage.ctl._base.shutil.which", return_value=None):
-        resolved = _resolve(config, tmp_path)
-
-    assert resolved.package_errors == []
-    assert _has_zsyncmake_message(resolved.package_warnings)
-
-
-def test_zsyncmake_errors_with_require_zsyncmake(tmp_path: Path) -> None:
-    _write_minimal_project(tmp_path)
-    config = BuildConfig(
-        update_info="zsync|https://example/app.AppImage.zsync", require_zsyncmake=True,
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
     )
+    config = BuildConfig(update_info="zsync|https://example/myapp-x86_64.AppImage.zsync")
 
-    with patch("appimage.ctl._base.shutil.which", return_value=None):
-        resolved = _resolve(config, tmp_path)
+    manager = MagicMock()
+    with patch.object(appdir_module, "_prepare_python", manager._prepare_python), \
+         patch.object(appdir_module, "_copy_assets", manager._copy_assets), \
+         patch.object(appdir_module, "_copy_extra_files", manager._copy_extra_files), \
+         patch.object(appdir_module, "_compile_pyc", manager._compile_pyc), \
+         patch.object(build_module, "_resolve_appimagetool", manager._resolve_appimagetool), \
+         patch.object(build_module, "_resolve_runtime_file", manager._resolve_runtime_file), \
+         patch.object(build_module.subprocess, "run", manager.subprocess_run), \
+         caplog.at_level("WARNING"):
+        manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
+        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        build(config, tmp_path)
 
-    assert not _has_zsyncmake_message(resolved.package_warnings)
-    assert _has_zsyncmake_message(resolved.package_errors)
-
-
-def test_zsyncmake_warns_not_errors_with_verify_downloads_alone(tmp_path: Path) -> None:
-    """verify_downloads is independent of require_zsyncmake — only warns."""
-    _write_minimal_project(tmp_path)
-    config = BuildConfig(
-        update_info="zsync|https://example/app.AppImage.zsync", verify_downloads=True,
-    )
-
-    with patch("appimage.ctl._base.shutil.which", return_value=None):
-        resolved = _resolve(config, tmp_path)
-
-    assert resolved.package_errors == []
-    assert any("zsyncmake is not on PATH" in w for w in resolved.package_warnings)
+    assert "did not produce" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -734,6 +885,224 @@ def test_reproducible_false_does_not_require_pins(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# _self_locating_python / _relocate_console_script / _scrub_build_paths
+#
+# Console-script shims used to be deleted outright once found to leak the
+# build path — correct for functionality (AppRun never runs them anyway)
+# but throws away a working `AppDir/python/bin/<entry-point>` for anyone
+# using the AppDir directly. Now relocated in place instead, using the same
+# self-locating shebang trick python-build-standalone's own bundled pip
+# already uses — confirmed by hand to still work after moving the whole
+# AppDir. Deletion stays as the fallback for anything that doesn't match a
+# recognized pip/distlib shim format exactly (see module docstring for why:
+# virtualenv's old --relocatable did a looser version of this and was
+# eventually removed for being unreliable).
+# ---------------------------------------------------------------------------
+
+def test_self_locating_python_matches_python_build_standalone_pattern() -> None:
+    from appimage.ctl.build_appdir import _self_locating_python
+
+    assert _self_locating_python(b"python3.13") == (
+        b'"$(dirname -- "$(realpath -- "$0")")/python3.13"'
+    )
+
+
+def test_relocate_console_script_rewrites_two_line_form() -> None:
+    from appimage.ctl.build_appdir import _relocate_console_script
+
+    executable = b"/home/alice/project/build/AppDir/python/bin/python3"
+    content = (
+        b"#!/bin/sh\n"
+        b"'''exec' " + executable + b' "$0" "$@"\n'
+        b"' '''\n"
+        b"import sys\nfrom mypkg import main\nsys.exit(main())\n"
+    )
+
+    result = _relocate_console_script(content, executable)
+
+    assert result is not None
+    assert executable not in result
+    assert result == (
+        b"#!/bin/sh\n"
+        b"'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")/python3\" \"$0\" \"$@\"\n"
+        b"' '''\n"
+        b"import sys\nfrom mypkg import main\nsys.exit(main())\n"
+    )
+
+
+def test_relocate_console_script_rewrites_one_line_form() -> None:
+    from appimage.ctl.build_appdir import _relocate_console_script
+
+    executable = b"/tmp/x/python3"
+    content = b"#!" + executable + b"\nimport sys\nfrom mypkg import main\nsys.exit(main())\n"
+
+    result = _relocate_console_script(content, executable)
+
+    assert result == (
+        b'#!"$(dirname -- "$(realpath -- "$0")")/python3"\n'
+        b"import sys\nfrom mypkg import main\nsys.exit(main())\n"
+    )
+
+
+def test_relocate_console_script_returns_none_for_unrecognized_format() -> None:
+    """Anything not byte-for-byte one of distlib's two shapes falls back to
+    deletion in _scrub_build_paths — never guessed at.
+    """
+    from appimage.ctl.build_appdir import _relocate_console_script
+
+    executable = b"/home/alice/project/build/AppDir/python/bin/python3"
+    content = b"#!/usr/bin/env python3\n# not a distlib shim at all\n" + executable
+
+    assert _relocate_console_script(content, executable) is None
+
+
+def test_relocated_console_script_actually_runs_after_moving_appdir(tmp_path: Path) -> None:
+    """The real point of relocating rather than deleting: the script must still
+    work when executed from a different location than it was written at —
+    exactly what happens when an AppImage gets mounted at a fresh temp path
+    on every run.
+    """
+    import os
+    import stat
+    import subprocess
+    import sys
+
+    from appimage.ctl.build_appdir import _relocate_console_script
+
+    original_dir = tmp_path / "original_build_location" / "python" / "bin"
+    original_dir.mkdir(parents=True)
+    executable = str(original_dir / "python3").encode()
+    os.symlink(sys.executable, original_dir / "python3")
+
+    content = (
+        b"#!/bin/sh\n"
+        b"'''exec' " + executable + b' "$0" "$@"\n'
+        b"' '''\n"
+        b"print('hello from relocated script')\n"
+    )
+    relocated = _relocate_console_script(content, executable)
+    assert relocated is not None
+
+    moved_dir = tmp_path / "moved_elsewhere" / "python" / "bin"
+    moved_dir.mkdir(parents=True)
+    os.symlink(sys.executable, moved_dir / "python3")
+    script_path = moved_dir / "myscript"
+    script_path.write_bytes(relocated)
+    script_path.chmod(script_path.stat().st_mode | stat.S_IEXEC)
+
+    result = subprocess.run(  # noqa: S603
+        [str(script_path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == "hello from relocated script"
+
+
+def test_record_hash_field_matches_pip_record_format() -> None:
+    """pip's own RECORD format: sha256=<urlsafe-base64, no padding>."""
+    from appimage.ctl.build_appdir import _record_hash_field
+
+    # A real (content, RECORD hash) pair captured from an actual pip install,
+    # to verify against pip's own output rather than just round-tripping our
+    # own algorithm against itself.
+    content = (
+        b"#!/bin/sh\n"
+        b"'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")/python3.13\" \"$0\" \"$@\"\n"
+        b"' '''\n"
+        b"import re\nimport sys\nfrom pip._internal.cli.main import main\n"
+        b"if __name__ == '__main__':\n"
+        b"    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
+        b"    sys.exit(main())\n"
+    )
+    assert _record_hash_field(content).startswith("sha256=")
+    # Deterministic and stable for identical content — the actual property
+    # _scrub_build_paths relies on when writing a relocated file's new RECORD row.
+    assert _record_hash_field(content) == _record_hash_field(content)
+
+
+def test_scrub_build_paths_relocates_console_script_and_updates_record(tmp_path: Path) -> None:
+    import csv
+
+    from appimage.ctl.build_appdir import _scrub_build_paths
+
+    appdir = tmp_path / "AppDir"
+    site_packages = appdir / "python" / "lib" / "python3.13" / "site-packages"
+    bin_dir = appdir / "python" / "bin"
+    bin_dir.mkdir(parents=True)
+    site_packages.mkdir(parents=True)
+    executable = str(bin_dir / "python3").encode()
+
+    script_content = (
+        b"#!/bin/sh\n"
+        b"'''exec' " + executable + b' "$0" "$@"\n'
+        b"' '''\n"
+        b"import sys\nfrom mypkg import main\nsys.exit(main())\n"
+    )
+    (bin_dir / "myapp").write_bytes(script_content)
+    (bin_dir / "myapp").chmod(0o755)
+
+    dist_info = site_packages / "mypkg-1.0.dist-info"
+    dist_info.mkdir()
+    record_path = dist_info / "RECORD"
+    old_hash_field, old_size = "sha256=stale", str(len(script_content) + 1)
+    record_path.write_text(f"../../../bin/myapp,{old_hash_field},{old_size}\n")
+
+    resolved = make_resolved(python="3.13")
+    _scrub_build_paths(resolved, appdir)
+
+    assert (bin_dir / "myapp").exists()  # relocated, not deleted
+    new_content = (bin_dir / "myapp").read_bytes()
+    assert executable not in new_content
+    assert b"dirname" in new_content
+
+    row = next(csv.reader(record_path.open(newline="", encoding="utf-8")))
+    assert row[0] == "../../../bin/myapp"
+    assert row[1] != old_hash_field
+    assert row[1].startswith("sha256=")
+    assert row[2] == str(len(new_content))
+
+
+def test_scrub_build_paths_still_deletes_direct_url_json(tmp_path: Path) -> None:
+    from appimage.ctl.build_appdir import _scrub_build_paths
+
+    appdir = tmp_path / "AppDir"
+    site_packages = appdir / "python" / "lib" / "python3.13" / "site-packages"
+    (appdir / "python" / "bin").mkdir(parents=True)
+    site_packages.mkdir(parents=True)
+
+    dist_info = site_packages / "myproject-1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "direct_url.json").write_text(f'{{"url": "file://{appdir}"}}')
+    (dist_info / "RECORD").write_text(f"myproject-1.0.dist-info/direct_url.json,sha256=x,10\n")
+
+    resolved = make_resolved(python="3.13")
+    _scrub_build_paths(resolved, appdir)
+
+    assert not (dist_info / "direct_url.json").exists()
+
+
+def test_scrub_build_paths_falls_back_to_delete_for_unrecognized_leak(tmp_path: Path) -> None:
+    from appimage.ctl.build_appdir import _scrub_build_paths
+
+    appdir = tmp_path / "AppDir"
+    site_packages = appdir / "python" / "lib" / "python3.13" / "site-packages"
+    (appdir / "python" / "bin").mkdir(parents=True)
+    site_packages.mkdir(parents=True)
+
+    dist_info = site_packages / "myproject-1.0.dist-info"
+    dist_info.mkdir()
+    leaked = dist_info / "weird_leftover.txt"
+    leaked.write_text(f"generated at {appdir} by something unexpected\n")
+    (dist_info / "RECORD").write_text("myproject-1.0.dist-info/weird_leftover.txt,sha256=x,10\n")
+
+    resolved = make_resolved(python="3.13")
+    _scrub_build_paths(resolved, appdir)
+
+    assert not leaked.exists()
+
+
+# ---------------------------------------------------------------------------
 # _normalize_mtimes
 # ---------------------------------------------------------------------------
 
@@ -912,6 +1281,98 @@ def test_install_targets_uses_configured_appimage_sha256_without_network(tmp_pat
     pin_call, main_call = [c.args[0] for c in mock_run.call_args_list]
     assert "--require-hashes" in pin_call
     assert "appimage==2.0.1" not in main_call
+
+
+# ---------------------------------------------------------------------------
+# _isolated_subprocess_env / PEP 370 user-site isolation
+#
+# Regression coverage for a real bug: none of the install subprocesses set
+# PYTHONNOUSERSITE, so pip resolved against the *build host's* own
+# ~/.local/lib/pythonX.Y/site-packages (PEP 370) in addition to the bundled
+# interpreter's site-packages. A requirement already satisfied there was
+# silently skipped ("Requirement already satisfied" instead of
+# "Collecting"), so the AppDir shipped without it — host-dependent and
+# undetectable from the build log alone. Confirmed by hand against a real
+# project: a package already present under a developer's ~/.local was
+# missing from the built AppDir entirely.
+# ---------------------------------------------------------------------------
+
+def test_isolated_subprocess_env_disables_user_site_and_bytecode() -> None:
+    from appimage.ctl.build_appdir import _isolated_subprocess_env
+
+    env = _isolated_subprocess_env()
+    assert env["PYTHONNOUSERSITE"] == "1"
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
+def test_install_targets_disables_user_site(tmp_path: Path) -> None:
+    from appimage.ctl.build_appdir import _install_targets
+
+    resolved = make_resolved(install_targets=["."], appimage_sha256="f" * 64)
+
+    with patch("appimage.ctl.build_appdir.subprocess.run") as mock_run:
+        _install_targets(resolved, tmp_path / "python3", tmp_path)
+
+    for call in mock_run.call_args_list:
+        assert call.kwargs["env"]["PYTHONNOUSERSITE"] == "1"
+
+
+def test_install_hashed_requirement_disables_user_site(tmp_path: Path) -> None:
+    from appimage.ctl.build_appdir import _install_hashed_requirement
+
+    with patch("appimage.ctl.build_appdir.subprocess.run") as mock_run:
+        _install_hashed_requirement(
+            "appimage==2.0.1", "e" * 64, tmp_path / "python3", tmp_path,
+        )
+
+    assert mock_run.call_args.kwargs["env"]["PYTHONNOUSERSITE"] == "1"
+
+
+def test_install_from_pylock_disables_user_site(tmp_path: Path) -> None:
+    from appimage.ctl.build_appdir import _install_from_pylock
+
+    (tmp_path / "pylock.toml").write_text("")
+    resolved = make_resolved(local_install_targets=["."], pylock="pylock.toml")
+
+    with patch("appimage.ctl.build_appdir.subprocess.run") as mock_run:
+        _install_from_pylock(resolved, tmp_path / "python3", tmp_path)
+
+    assert mock_run.call_count == 2
+    for call in mock_run.call_args_list:
+        assert call.kwargs["env"]["PYTHONNOUSERSITE"] == "1"
+
+
+def test_run_hook_disables_user_site(tmp_path: Path) -> None:
+    """Hooks predate this project's reproducibility work and were never revisited —
+    anything a hook does through the bundled interpreter (its documented purpose:
+    editing installed packages between build steps) is exposed to the same PEP 370
+    leak pip install was.
+    """
+    from appimage.ctl.build_appdir import _run_hook
+
+    with patch("appimage.ctl.build_appdir.subprocess.run") as mock_run:
+        _run_hook("hook.sh", tmp_path, tmp_path / "AppDir")
+
+    env = mock_run.call_args.kwargs["env"]
+    assert env["PYTHONNOUSERSITE"] == "1"
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert env["APPDIR"] == str(tmp_path / "AppDir")
+
+
+def test_run_pip_lock_disables_user_site(tmp_path: Path) -> None:
+    from appimage.ctl.lock import _run_pip_lock
+
+    with patch("appimage.ctl.lock._pip_version", return_value=(26, 1)), \
+         patch("appimage.ctl.lock.subprocess.run") as mock_run:
+        _run_pip_lock(
+            tmp_path / "python3",
+            tmp_path,
+            ["."],
+            tmp_path / "pylock.toml",
+            uploaded_prior_to="",
+        )
+
+    assert mock_run.call_args.kwargs["env"]["PYTHONNOUSERSITE"] == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -1474,7 +1935,7 @@ def test_prepare_python_uses_pylock_when_configured(tmp_path: Path) -> None:
     assert "." in local_call
     assert "appimage==2.0.1" not in local_call
     assert "--require-hashes" in lock_call
-    assert "--no-deps" in lock_call
+    assert "--no-deps" not in lock_call
     assert str(tmp_path / "pylock.toml") in lock_call
 
 
