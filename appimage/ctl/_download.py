@@ -132,8 +132,10 @@ def _verify_sha256(path: Path, expected: str, *, label: str) -> None:
     if actual.lower() != expected.lower().removeprefix("sha256:"):
         msg = (
             f"{label} sha256 mismatch for {path}: "
-            f"expected {expected}, got {actual}. "
-            "Remove the file and retry, or correct the configured hash."
+            f"expected {expected}, got {actual}. A freshly downloaded file "
+            "is removed automatically so a retry re-downloads cleanly; a "
+            "locally configured or already-cached file is left as-is — "
+            "remove it yourself and retry, or correct the configured hash."
         )
         raise RuntimeError(msg)
     _log.info("%s sha256 verified: %s", label, actual)

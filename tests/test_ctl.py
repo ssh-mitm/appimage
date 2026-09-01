@@ -931,6 +931,14 @@ def test_relocate_console_script_rewrites_two_line_form() -> None:
 
 
 def test_relocate_console_script_rewrites_one_line_form() -> None:
+    """A one-line #!<executable> input is upgraded to the two-line #!/bin/sh +
+    exec polyglot form, not rewritten as a plain one-line #!<replacement>: the
+    kernel never shell-expands a #! line, so a literal
+    #!"$(dirname ...)/python3" would fail at exec time with "bad interpreter"
+    even without moving the AppDir at all (regression test — see
+    test_relocated_one_line_script_actually_runs below for the executable
+    proof).
+    """
     from appimage.ctl.build_appdir import _relocate_console_script
 
     executable = b"/tmp/x/python3"
@@ -939,7 +947,9 @@ def test_relocate_console_script_rewrites_one_line_form() -> None:
     result = _relocate_console_script(content, executable)
 
     assert result == (
-        b'#!"$(dirname -- "$(realpath -- "$0")")/python3"\n'
+        b"#!/bin/sh\n"
+        b"'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")/python3\" \"$0\" \"$@\"\n"
+        b"' '''\n"
         b"import sys\nfrom mypkg import main\nsys.exit(main())\n"
     )
 
@@ -997,6 +1007,45 @@ def test_relocated_console_script_actually_runs_after_moving_appdir(tmp_path: Pa
         check=True,
     )
     assert result.stdout.strip() == "hello from relocated script"
+
+
+def test_relocated_one_line_script_actually_runs(tmp_path: Path) -> None:
+    """Regression test for the bug fixed above: a script whose *original*
+    shebang was the short one-line #!<executable> form must still actually
+    execute after relocation — even at its original, unmoved location. A
+    naive one-line #!"$(dirname ...)/python3" replacement fails here with
+    "bad interpreter: no such file or directory", since the kernel passes
+    the #! line to execve() literally and never expands $(...); only the
+    two-line #!/bin/sh + exec form (which _relocate_console_script now
+    always produces) actually works.
+    """
+    import os
+    import stat
+    import subprocess
+    import sys
+
+    from appimage.ctl.build_appdir import _relocate_console_script
+
+    bin_dir = tmp_path / "python" / "bin"
+    bin_dir.mkdir(parents=True)
+    executable = str(bin_dir / "python3").encode()
+    os.symlink(sys.executable, bin_dir / "python3")
+
+    content = b"#!" + executable + b"\nprint('hello from one-line script')\n"
+    relocated = _relocate_console_script(content, executable)
+    assert relocated is not None
+
+    script_path = bin_dir / "myscript"
+    script_path.write_bytes(relocated)
+    script_path.chmod(script_path.stat().st_mode | stat.S_IEXEC)
+
+    result = subprocess.run(  # noqa: S603
+        [str(script_path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == "hello from one-line script"
 
 
 def test_record_hash_field_matches_pip_record_format() -> None:

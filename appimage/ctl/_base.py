@@ -81,8 +81,10 @@ class BuildConfig:
     hooks : dict[str, str]
         Lifecycle hook scripts. Supported keys: ``post_install``, ``pre_package``.
     appimagetool : str
-        Path to a local appimagetool binary. When empty, the tool is looked up
-        in ``PATH``, then in the build cache, and finally downloaded.
+        Path to a local appimagetool binary. When empty, the build cache is
+        checked, then a fresh download — ``PATH`` is deliberately never
+        searched (see "Classic appimagetool detected" in
+        ``docs/reproducible-builds.md``).
     appimagetool_version : str
         Informational label recording which appimagetool build
         ``appimagetool_sha256`` corresponds to (e.g. its own ``--version``

@@ -558,15 +558,27 @@ def _relocate_console_script(content: bytes, executable: bytes) -> bytes | None:
     ScriptMaker._build_shebang`` ever produces for a POSIX target — a plain
     ``#!<executable>`` when short enough, otherwise a two-line ``#!/bin/sh``
     + polyglot ``exec`` fallback (triggered past 127 bytes on Linux, 512 on
-    macOS; an AppDir path is long enough that the fallback is the common
-    case in practice). Returns ``None``, deferring to deletion, for
-    anything that doesn't match either byte-for-byte — deliberately
-    narrow rather than a loose regex: virtualenv shipped a general-purpose
-    ``--relocatable`` doing the analogous rewrite for years and eventually
-    removed it (unreliable, mainly around compiled-code packages — see
+    macOS). Returns ``None``, deferring to deletion, for anything that
+    doesn't match either byte-for-byte — deliberately narrow rather than a
+    loose regex: virtualenv shipped a general-purpose ``--relocatable``
+    doing the analogous rewrite for years and eventually removed it
+    (unreliable, mainly around compiled-code packages — see
     https://github.com/pypa/virtualenv/issues/90) — better to fall back to
     the always-safe delete than to guess at a format distlib didn't
     actually write and risk producing a script that's broken in a new way.
+
+    Both input forms are rewritten to the two-line ``#!/bin/sh`` + polyglot
+    ``exec`` form, never to a plain one-line ``#!<replacement>``: the kernel
+    never shell-expands a ``#!`` line — it passes everything after ``#!`` to
+    ``execve()`` literally — so a self-locating replacement (which embeds a
+    ``$(dirname ...)`` command substitution, see ``_self_locating_python``)
+    is only ever runnable via a real shell, which only the two-line form
+    invokes. A one-line input's original shebang was short enough to fit
+    the OS's shebang-length limit, but the *replacement* isn't a literal
+    path, so that limit is beside the point here — confirmed by hand: a
+    plain ``#!"$(dirname ...)/python3"`` line fails at exec time with
+    "bad interpreter: no such file or directory", even unmoved, since
+    ``$(...)`` is never evaluated.
 
     Parameters
     ----------
@@ -586,17 +598,15 @@ def _relocate_console_script(content: bytes, executable: bytes) -> bytes | None:
     """
     python_bin_name = executable.rsplit(b"/", 1)[-1]
     replacement = _self_locating_python(python_bin_name)
+    new_prefix = b"#!/bin/sh\n'''exec' " + replacement + b' "$0" "$@"\n' + b"' '''\n"
 
     two_line = b"#!/bin/sh\n'''exec' " + executable + b' "$0" "$@"\n' + b"' '''\n"
     if content.startswith(two_line):
-        new_prefix = (
-            b"#!/bin/sh\n'''exec' " + replacement + b' "$0" "$@"\n' + b"' '''\n"
-        )
         return new_prefix + content[len(two_line) :]
 
     one_line = b"#!" + executable + b"\n"
     if content.startswith(one_line):
-        return b"#!" + replacement + b"\n" + content[len(one_line) :]
+        return new_prefix + content[len(one_line) :]
 
     return None
 
@@ -764,8 +774,14 @@ def _copy_assets(resolved: _ResolvedBuild, project_root: Path, appdir: Path) -> 
     """Copy icon, desktop file, and AppRun script into AppDir."""
     _log.info("Copying assets...")
     if resolved.icon:
+        if not resolved.icon.exists():
+            msg = f"icon not found: {resolved.icon}"
+            raise FileNotFoundError(msg)
         shutil.copy2(resolved.icon, appdir / (resolved.app + resolved.icon.suffix))
     if resolved.desktop:
+        if not resolved.desktop.exists():
+            msg = f"desktop file not found: {resolved.desktop}"
+            raise FileNotFoundError(msg)
         shutil.copy2(resolved.desktop, appdir / resolved.desktop.name)
     else:
         _generate_desktop(resolved, project_root, appdir / f"{resolved.app}.desktop")

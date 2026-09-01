@@ -3,6 +3,7 @@
 
 import argparse
 import logging
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 from typing import Final
@@ -370,12 +371,8 @@ def main() -> None:
 
     try:
         config = BuildConfig.from_pyproject(project_root)
-    except FileNotFoundError as exc:
-        sys.exit(f"Error: {exc}")
+        _apply_cli_overrides(config, args)
 
-    _apply_cli_overrides(config, args)
-
-    try:
         if args.command == "check":
             ok = check(config, project_root)
             sys.exit(0 if ok else 1)
@@ -395,7 +392,13 @@ def main() -> None:
             update_tools(config, project_root)
         else:
             build(config, project_root)
-    except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
+    except (
+        FileNotFoundError,
+        RuntimeError,
+        OSError,
+        ValueError,  # also covers tomllib.TOMLDecodeError, a ValueError subclass
+        subprocess.CalledProcessError,
+    ) as exc:
         sys.exit(f"Error: {exc}")
 
 
