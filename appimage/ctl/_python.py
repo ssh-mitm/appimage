@@ -25,7 +25,7 @@ _log: Final = logging.getLogger(__name__)
 def _python_tarball_cache_path(build_dir: Path) -> Path:
     """Return the conventional build-cache path for a resolved Python tarball.
 
-    The one place encoding this filename convention — see
+    The one place encoding this filename convention - see
     ``_appimagetool._appimagetool_cache_path`` for the equivalent for
     appimagetool/the runtime stub, and the same rationale.
     """
@@ -64,7 +64,7 @@ def _resolve_python_url(
     tuple[str, str | None, str]
         Direct download URL for the matching ``install_only_stripped``
         tarball, its sha256 hex digest if GitHub published one for this
-        asset (``None`` otherwise), and the release's own date tag —
+        asset (``None`` otherwise), and the release's own date tag -
         *date* echoed back if it was already given, or whatever "latest"
         actually resolved to otherwise, so callers can persist it (see
         ``_pinned_download_fields``) without a second API round trip.
@@ -109,7 +109,7 @@ def _install_python(
     """Populate ``appdir/python`` from ``python_dir`` or a resolved tarball.
 
     ``python_dir`` bypasses tarball resolution, caching, and download
-    entirely — it's copied in as given, unverified by design (see
+    entirely - it's copied in as given, unverified by design (see
     ``BuildConfig.python_dir``). Otherwise, behaves exactly as a plain
     build always has: resolve a python-build-standalone tarball (local
     ``python_archive``, build cache, or download) and extract it.
@@ -139,7 +139,7 @@ def _resolve_python_tarball(
     A fresh download is verified against ``python_sha256`` when set, else
     against the digest GitHub publishes for the asset, at no extra network
     cost. A local ``python_archive`` or a cached tarball is only verified
-    when ``python_sha256`` is explicitly set — otherwise, unless
+    when ``python_sha256`` is explicitly set - otherwise, unless
     ``verify_downloads`` is also set, the documented offline/CI workflow
     stays fully network-free by default and this is used unverified.
     """

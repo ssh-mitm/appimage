@@ -34,7 +34,7 @@ def _replace_or_append_toml_fields(
     """Write *new* key/value pairs into ``[tool.appimage]``, overwriting existing lines.
 
     The opposite of ``write_config``'s insertion, which only ever adds
-    missing keys and never touches an existing one — this is what
+    missing keys and never touches an existing one - this is what
     ``update_tools`` needs to move pins forward instead of filling gaps.
     Scoped strictly to the ``[tool.appimage]`` section's own scalar lines,
     stopping at the next ``[`` header (a subtable like

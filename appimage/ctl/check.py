@@ -66,12 +66,12 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
     """Return a checklist of the independent pinning stories.
 
     Unlike the individual warnings above, this always reflects the current
-    state — not just when ``reproducible``/``require_pylock``/
+    state - not just when ``reproducible``/``require_pylock``/
     ``require_build_pylock`` are set and something is missing. Without
     it, a plain ``check`` gives no signal at all about the reproducibility
     pins: they only ever surface as a warning deep inside a real ``build()``
     run (when appimagetool/runtime/python are actually resolved) or as a
-    hard error once ``reproducible`` is already turned on — nothing in
+    hard error once ``reproducible`` is already turned on - nothing in
     between.
 
     AppDir and packaging reproducibility are reported as two separate
@@ -82,13 +82,13 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
     if resolved.python_dir:
         appdir_line = (
             f"AppDir reproducibility: python_dir set ({resolved.python_dir}) "
-            "— trusted directory, not hash-verified"
+            "- trusted directory, not hash-verified"
         )
     elif appdir_ready:
         appdir_line = "AppDir reproducibility: python_date set"
     else:
         appdir_line = (
-            "AppDir reproducibility: python_date not set — run 'init' to "
+            "AppDir reproducibility: python_date not set - run 'init' to "
             "resolve and pin it, or set python_dir"
         )
 
@@ -109,7 +109,7 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
             if not getattr(resolved, key)
         )
         runtime_module_line = (
-            f"Runtime module reproducibility: {missing_runtime} not set — run "
+            f"Runtime module reproducibility: {missing_runtime} not set - run "
             "'init' to resolve and pin them"
         )
 
@@ -126,7 +126,7 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
             key for key in _PACKAGE_REPRODUCIBILITY_PINS if not getattr(resolved, key)
         )
         package_line = (
-            f"Packaging reproducibility: {missing} not set — run 'init' to "
+            f"Packaging reproducibility: {missing} not set - run 'init' to "
             "resolve and pin them"
         )
 
@@ -134,14 +134,14 @@ def _reproducibility_summary(resolved: _ResolvedBuild) -> list[str]:
     pylock_line = (
         f"Dependency verification: pylock set ({resolved.pylock})"
         if pylock_ready
-        else "Dependency verification: pylock not set — run 'lock' to generate pylock.toml"
+        else "Dependency verification: pylock not set - run 'lock' to generate pylock.toml"
     )
 
     build_pylock_ready = bool(resolved.build_pylock)
     build_pylock_line = (
         f"Build backend verification: build_pylock set ({resolved.build_pylock})"
         if build_pylock_ready
-        else "Build backend verification: build_pylock not set — run 'lock' "
+        else "Build backend verification: build_pylock not set - run 'lock' "
         "to generate it alongside pylock.toml"
     )
 
@@ -179,7 +179,7 @@ def _append_unverified_download_error(
 
     A pin already configured, or a resolution that would download fresh
     (always auto-verified against the digest GitHub publishes for the
-    asset, regardless of any pin), is never a problem — only an explicit
+    asset, regardless of any pin), is never a problem - only an explicit
     config path or an existing build-cache hit with no matching pin is.
     """
     if pin:
@@ -188,7 +188,7 @@ def _append_unverified_download_error(
         return
     bucket.append(
         f"verify_downloads is set, but {label} would resolve unverified (no "
-        f"{config_key} pin configured) — the build would abort at that point. "
+        f"{config_key} pin configured) - the build would abort at that point. "
         f"Set {config_key} (run 'init' to resolve and pin it).",
     )
 
@@ -197,24 +197,24 @@ def _predict_unverified_downloads(resolved: _ResolvedBuild, project_root: Path) 
     """Append early appdir_errors/package_errors entries for downloads ``verify_downloads`` would reject.
 
     Computed purely from config plus a cheap existence check on the
-    conventional build-cache paths — no network, no hashing — so this is
+    conventional build-cache paths - no network, no hashing - so this is
     safe to run on every ``check()`` (and, via ``_format_check``, every
     ``build()``/``build_appdir()``). Reuses ``_resolution_source``, the
     exact same precedence function ``_locate_appimagetool``/
     ``_resolve_runtime_file``/``_resolve_python_tarball`` call to decide
-    the very same thing for real — there's no second copy of "explicit
+    the very same thing for real - there's no second copy of "explicit
     path, then cache, then download" to drift out of sync here.
 
     Deliberately only predicts the ``verify_downloads``-alone case.
     ``reproducible`` already requires every pin
     (``appimagetool_sha256``/``runtime_sha256`` in ``package_errors``,
     similarly for the AppDir-side pins) to be set unconditionally,
-    regardless of how it would resolve — a stricter, resolution-independent
+    regardless of how it would resolve - a stricter, resolution-independent
     check that already fully covers it, so predicting it here too would
     just be a redundant second error for the same root cause. Only
     ``verify_downloads`` set without ``reproducible`` needs this
     prediction, since there a resolution that would download fresh is
-    perfectly fine unpinned — the naive version of this check (ignoring
+    perfectly fine unpinned - the naive version of this check (ignoring
     resolution kind entirely) would otherwise warn on that same, common,
     perfectly valid case.
     """
@@ -259,7 +259,7 @@ def _format_check(resolved: _ResolvedBuild, project_root: Path) -> None:
     resolved : _ResolvedBuild
         Resolved build configuration to report.
     project_root : Path
-        Project root directory — needed to compute conventional build-cache
+        Project root directory - needed to compute conventional build-cache
         paths for ``_predict_unverified_downloads``.
 
     """

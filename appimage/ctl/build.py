@@ -93,21 +93,21 @@ def _stage_runtime_file_for_appimagetool(runtime_bin: Path, staging_dir: Path) -
     Works around a bug in the pinned ``AppImage/appimagetool`` build itself
     (confirmed by hand, isolated from appimagectl entirely): its glib-based
     CLI option parser fails to decode a ``--runtime-file`` value containing
-    any non-ASCII byte — ``Option parsing failed: Invalid byte sequence in
-    conversion input`` — reproducible regardless of the process's own
+    any non-ASCII byte - ``Option parsing failed: Invalid byte sequence in
+    conversion input`` - reproducible regardless of the process's own
     locale (tested ``de_DE.UTF-8`` and ``C.UTF-8``) and regardless of
     ``G_FILENAME_ENCODING``/``G_BROKEN_FILENAMES``, so it isn't something
     appimagectl can fix by adjusting the subprocess environment. The
-    *positional* AppDir/output arguments are unaffected — only this one
+    *positional* AppDir/output arguments are unaffected - only this one
     flag's value goes through whatever stricter path glib uses for it.
     ``runtime_bin`` is ``project_root / build_dir / f"runtime-{arch}"``, so
     any project whose absolute path contains a non-ASCII character (a very
-    ordinary thing — e.g. a home directory under a non-English username)
+    ordinary thing - e.g. a home directory under a non-English username)
     would otherwise fail packaging outright, 100% of the time. Staging a
     plain copy under a guaranteed-ASCII temp path sidesteps the bug
     entirely: the flag value itself never contains anything that could
     trip it, independent of where the project actually lives. Purely a
-    workaround for appimagetool's own argument parsing — the copy's
+    workaround for appimagetool's own argument parsing - the copy's
     *content* is byte-identical to ``runtime_bin`` and has no bearing on
     the packaged output.
     """
@@ -121,7 +121,7 @@ def _check_zsync_file(dist_dir: Path, output_name: str, *, require: bool) -> Non
 
     Checked against the real output rather than predicted beforehand: an
     earlier version of this project guessed by checking whether
-    ``zsyncmake`` was on the *build host's* ``PATH`` — but appimagetool
+    ``zsyncmake`` was on the *build host's* ``PATH`` - but appimagetool
     bundles its own copy and its ``AppRun`` puts its own ``usr/bin`` first
     on ``PATH`` (ahead of the host's), so that guess was checking the wrong
     thing entirely and gave a different, host-dependent answer on every
@@ -134,7 +134,7 @@ def _check_zsync_file(dist_dir: Path, output_name: str, *, require: bool) -> Non
         return
     msg = (
         f"update_info is set but appimagetool did not produce {zsync_path.name} "
-        "— see its own output above for why (a custom appimagetool build "
+        "- see its own output above for why (a custom appimagetool build "
         "with no bundled zsyncmake is the most likely cause)."
     )
     if require:

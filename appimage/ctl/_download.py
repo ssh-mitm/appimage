@@ -105,18 +105,18 @@ def _resolution_source(explicit: str, cache_path: Path) -> str:
 
     Returns ``"config"`` (an explicit path is configured), ``"cache"`` (no
     explicit path, but *cache_path* already exists), or ``"download"``
-    (neither — a fresh download would happen). Pure and I/O-limited to a
+    (neither - a fresh download would happen). Pure and I/O-limited to a
     single existence check (no hashing, no network) so it's cheap enough to
     call from ``check()`` too, not just from an actual build.
 
     This is the one place encoding "explicit config path, then the build
-    cache, then a download" precedence — every ``_resolve_*``/``_locate_*``
+    cache, then a download" precedence - every ``_resolve_*``/``_locate_*``
     function in ``appimage.ctl`` (appimagetool, the runtime stub, the
     Python archive) calls this rather than re-implementing the same
     if/elif/else, and ``check()`` calls it too to predict, without
     downloading anything, whether ``verify_downloads`` would actually abort
     a real build for a given artifact: only ``"config"``/``"cache"`` can
-    ever be used unverified without a pin — a ``"download"`` is always
+    ever be used unverified without a pin - a ``"download"`` is always
     auto-verified against the digest GitHub publishes for the asset. Kept
     in sync with the real resolvers automatically, since there's only one
     implementation of the precedence to drift from.
@@ -162,7 +162,7 @@ def _verify_sha256(path: Path, expected: str, *, label: str) -> None:
             f"{label} sha256 mismatch for {path}: "
             f"expected {expected}, got {actual}. A freshly downloaded file "
             "is removed automatically so a retry re-downloads cleanly; a "
-            "locally configured or already-cached file is left as-is — "
+            "locally configured or already-cached file is left as-is - "
             "remove it yourself and retry, or correct the configured hash."
         )
         raise RuntimeError(msg)
@@ -187,7 +187,7 @@ def _require_or_warn_unverified(
     config_key : str
         Name of the ``[tool.appimage]`` key that would pin it.
     strict : bool
-        ``resolved.verify_downloads`` — when true, raise instead of warn.
+        ``resolved.verify_downloads`` - when true, raise instead of warn.
 
     Raises
     ------

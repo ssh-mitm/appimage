@@ -19,12 +19,12 @@ def update_tools(config: BuildConfig, project_root: Path) -> None:
     Refreshes ``python_date``/``python_sha256``, ``appimage_version``/
     ``appimage_sha256``, ``appimagetool_version``/``appimagetool_sha256``,
     ``runtime_sha256``, and ``appimagectl_version`` unconditionally,
-    overwriting whatever's already configured — the same "move pins
+    overwriting whatever's already configured - the same "move pins
     forward" role ``packaging/update-requirements.sh --upgrade`` plays for
     this project's own build-backend pin, applied here to appimage.ctl's
     own toolchain. Never touches ``pylock``/``build_pylock`` (already
     regenerated on every ``lock`` run regardless of what's configured) or
-    project metadata (``app``/``entry_point``/``icon``/``desktop``) — this
+    project metadata (``app``/``entry_point``/``icon``/``desktop``) - this
     is specifically for the pins ``init`` would otherwise leave alone once
     set once.
 

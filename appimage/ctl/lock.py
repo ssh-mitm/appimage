@@ -18,7 +18,7 @@ _log: Final = logging.getLogger(__name__)
 
 # `pip lock` (generates pylock.toml) needs pip >= 25.1; `pip install -r
 # pylock.toml` (consumed by `_install_from_pylock`) needs pip >= 26.1. Only
-# the generation side is checked here — by the time a build tries to
+# the generation side is checked here - by the time a build tries to
 # install from an existing pylock.toml, a hard pip error surfaces the same
 # problem anyway, and duplicating the check there would mean parsing pip's
 # version on every single build instead of only on `lock`.
@@ -36,7 +36,7 @@ def _run_pip_lock(
     """Run ``pip lock`` (pip >= 25.1) for *requirements*, writing *output_path*.
 
     Shared by ``_generate_lock`` (runtime dependencies) and
-    ``_generate_build_pylock`` (``[build-system].requires``) — both are a
+    ``_generate_build_pylock`` (``[build-system].requires``) - both are a
     pip-version check plus one ``pip lock`` invocation, differing only in
     which requirements go in. Run through *python_bin*, the same bundled
     python-build-standalone interpreter the real build installs into, so
@@ -75,13 +75,13 @@ def _strip_local_directory_entries(pylock_path: Path) -> None:
     ``pip lock --only-deps`` excludes *every* given requirement from its
     output, not just a chosen one ("No user-supplied requirements will be
     handled, even if they were dependencies of other user-supplied
-    requirements" per its own ``--help``) — so locking ``appimage_pin``
+    requirements" per its own ``--help``) - so locking ``appimage_pin``
     and ``config.packages`` alongside the local project under
     ``--only-deps`` silently dropped their own direct pins too, only their
     *transitive* deps made it into the lock. Locking without
     ``--only-deps`` instead resolves everything together in one
     consistent pass, and this strips the local project's entry from the
-    result afterwards — identified structurally by its
+    result afterwards - identified structurally by its
     ``[packages.directory]`` table (the schema ``pip lock`` uses for a
     local path source), not by name, so no PEP 503 name-normalization is
     needed to find it.
@@ -107,7 +107,7 @@ def _generate_lock(
 
     Locks ``appimage_pin``, the local project, and ``config.packages``
     (all inside ``resolved.install_targets``) together in one resolution,
-    then strips the local project's own entry — see
+    then strips the local project's own entry - see
     ``_strip_local_directory_entries`` for why.
     """
     pylock_path = project_root / (resolved.pylock or "pylock.toml")
@@ -135,7 +135,7 @@ def _generate_build_pylock(
     project's own build backend requirement instead of its runtime
     dependencies. ``pylock`` deliberately excludes the local project via
     ``--only-deps`` since it has no stable hash to pin between source
-    edits — but its *build-system requirement* is a real, hashable PyPI
+    edits - but its *build-system requirement* is a real, hashable PyPI
     distribution like any other, so no such exclusion applies here.
     """
     pyproject_path = project_root / "pyproject.toml"
@@ -143,7 +143,7 @@ def _generate_build_pylock(
         data = tomllib.load(f)
     requires: list[str] = data.get("build-system", {}).get("requires", [])
     if not requires:
-        msg = "No [build-system].requires found in pyproject.toml — nothing to lock."
+        msg = "No [build-system].requires found in pyproject.toml - nothing to lock."
         raise RuntimeError(msg)
 
     build_pylock_path = project_root / (resolved.build_pylock or "pylock.build.toml")
@@ -210,12 +210,12 @@ def lock(
 
     Extracts the same python-build-standalone interpreter a real build
     would use into ``<build_dir>/AppDir`` (overwriting it, same as
-    ``build()`` does — nothing there survives past the next real build
+    ``build()`` does - nothing there survives past the next real build
     anyway) purely to run ``pip lock`` through it, then generates
     ``pylock.toml`` (runtime dependencies) and a build-backend pylock file
     (``[build-system].requires``) together, writing ``pylock``/
     ``build_pylock`` into ``[tool.appimage]`` for whichever of the
-    two isn't already set — the same way ``init`` writes its own
+    two isn't already set - the same way ``init`` writes its own
     auto-detected fields. Both are generated on every ``lock`` run
     rather than needing separate flags: ``[build-system].requires``
     changes rarely, and re-locking it costs little when it hasn't.
@@ -228,7 +228,7 @@ def lock(
         Project root directory.
     uploaded_prior_to : str
         Optional ``pip lock --uploaded-prior-to`` cooldown window (ISO 8601
-        ``PnD`` format, e.g. ``"P7D"``) — excludes packages published more
+        ``PnD`` format, e.g. ``"P7D"``) - excludes packages published more
         recently than that from the resolution, giving the community time
         to catch a compromised release before it gets locked in. Applies
         only to this resolution step; irrelevant once pylock.toml exists,

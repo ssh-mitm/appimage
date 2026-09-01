@@ -20,7 +20,7 @@ from typing import Final
 _log: Final = logging.getLogger(__name__)
 _DEFAULT_ICON: Final = Path(__file__).parent.parent / "assets" / "default_icon.svg"
 
-# Used to suggest an update_info value from [project.urls] — matches only a
+# Used to suggest an update_info value from [project.urls] - matches only a
 # bare repository root (no /issues, /blob/... paths), since those aren't
 # valid gh-releases-zsync targets.
 _GITHUB_REPO_PATTERN: Final = re.compile(
@@ -82,20 +82,20 @@ class BuildConfig:
         Lifecycle hook scripts. Supported keys: ``post_install``, ``pre_package``.
     appimagetool : str
         Path to a local appimagetool binary. When empty, the build cache is
-        checked, then a fresh download — ``PATH`` is deliberately never
+        checked, then a fresh download - ``PATH`` is deliberately never
         searched (see "Classic appimagetool detected" in
         ``docs/reproducible-builds.md``).
     appimagetool_version : str
         Informational label recording which appimagetool build
         ``appimagetool_sha256`` corresponds to (e.g. its own ``--version``
-        banner). Not used to select a download — AppImageKit's ``continuous``
-        release has no addressable historical versions — purely a
+        banner). Not used to select a download - AppImageKit's ``continuous``
+        release has no addressable historical versions - purely a
         human-readable record of what the pinned hash means. Written
         automatically by ``init`` alongside the hash.
     appimagetool_sha256 : str
         Expected sha256 of the appimagetool binary. When set, verified
         against whichever binary is resolved (explicit path, ``PATH``, build
-        cache, or download) — a mismatch aborts the build. When empty,
+        cache, or download) - a mismatch aborts the build. When empty,
         appimagetool is used unverified, whatever is currently resolved.
     python_archive : str
         Path to a local python-build-standalone tarball. When empty, the
@@ -108,13 +108,13 @@ class BuildConfig:
     python_dir : str
         Path to an already-extracted Python distribution directory, copied
         into ``AppDir/python`` directly instead of extracting a tarball.
-        Config-only — deliberately has no CLI override, since setting it is
+        Config-only - deliberately has no CLI override, since setting it is
         meant to be a considered, committed-to-``pyproject.toml`` decision,
         not a one-off flag. There is no single archive file left to hash by
         the time a directory exists, so this is used exactly as given, with
         no verification and no interaction with ``python_archive``/
         ``python_date``/``python_sha256`` (set at most one of ``python_dir``
-        or ``python_archive``). Not a gap in the tool's own verification —
+        or ``python_archive``). Not a gap in the tool's own verification -
         it exists for a directory whose *provenance* was already verified
         elsewhere (e.g. via ``uv python install`, or via ``python_archive``
         + ``python_sha256`` on a prior run) and is now trusted as a fixed,
@@ -122,17 +122,17 @@ class BuildConfig:
         yields the same bytes every time, same as pointing ``appimagetool``/
         ``runtime_file`` at a local path already does elsewhere in this
         tool. ``reproducible`` accepts ``python_dir`` in place of
-        ``python_date`` for exactly this reason — but ``check``'s
+        ``python_date`` for exactly this reason - but ``check``'s
         reproducibility checklist marks it as a *trusted, unverified*
         pin rather than showing it identically to a hash-checked one, since
         that trust is asserted by you, not established by this tool.
     appimage_version : str
-        Exact version of the ``appimage`` runtime module — the one AppRun
-        and the ``--python-*`` flags depend on — to install into the
+        Exact version of the ``appimage`` runtime module - the one AppRun
+        and the ``--python-*`` flags depend on - to install into the
         bundled site-packages, regardless of the packaged project's own
         declared dependencies. Empty resolves to the version of
         ``appimage.ctl`` currently doing the build, which is what pins the
-        module to *some* known version even unset — but that's implicit,
+        module to *some* known version even unset - but that's implicit,
         not a committed value in ``pyproject.toml``, so it can silently
         differ between machines running different ``appimage.ctl``
         releases. Set explicitly (``init`` does this automatically) for
@@ -141,30 +141,30 @@ class BuildConfig:
     appimage_sha256 : str
         Expected sha256 of the ``appimage`` wheel for ``appimage_version``.
         When empty, the digest PyPI publishes for that release is looked
-        up and used instead (a network call, best-effort — falls back to
+        up and used instead (a network call, best-effort - falls back to
         a warning, or a hard error under ``verify_downloads``, if it
-        can't be reached) — set explicitly to verify without that lookup,
+        can't be reached) - set explicitly to verify without that lookup,
         e.g. for a fully offline build.
     appimagectl_version : str
-        Expected version of ``appimage.ctl`` itself — the tool doing the
+        Expected version of ``appimage.ctl`` itself - the tool doing the
         build, not the bundled runtime module (``appimage_version`` above,
-        a different concern). Config-only — deliberately no CLI override,
+        a different concern). Config-only - deliberately no CLI override,
         since the entire point is a committed value to compare *against*,
         not something a single invocation should be able to wave away.
         Empty skips the check (no expectation recorded, so no possible
         drift). Which version of ``appimage.ctl`` actually gets installed
         remains ordinary Python dependency management on your end (pip,
         pipx, a pinned dev-dependency, ...); this only records what that
-        was expected to resolve to, so a later drift — a colleague, or CI,
+        was expected to resolve to, so a later drift - a colleague, or CI,
         running a newer or older ``appimage.ctl`` than the project was
-        last built with — surfaces as a visible warning (or a hard error
+        last built with - surfaces as a visible warning (or a hard error
         under ``verify_downloads``) instead of silently changing build
         behavior no other pin here would catch. ``init`` writes the
         currently-running version automatically.
     runtime_file : str
         Path to a local AppImage runtime ELF stub, passed to appimagetool as
         ``--runtime-file``. When empty, it is looked up in the build cache
-        and then downloaded — pre-fetching it this way (rather than letting
+        and then downloaded - pre-fetching it this way (rather than letting
         appimagetool download it itself at packaging time) makes it
         verifiable and avoids hangs in network environments where
         appimagetool's bundled libcurl cannot complete the download.
@@ -175,17 +175,17 @@ class BuildConfig:
     verify_downloads : bool
         When true, any of appimagetool, the runtime file, or the Python
         archive that would otherwise be used unverified (no configured hash
-        and no digest published by GitHub for that resolution path — e.g. a
+        and no digest published by GitHub for that resolution path - e.g. a
         cached binary) aborts the build instead of logging a warning and
         continuing.
     require_zsyncmake : bool
         When true, abort the build if ``update_info`` is set but appimagetool
         didn't actually produce a ``.zsync`` delta-update file next to the
-        packaged AppImage — instead of logging a warning. Checked after
+        packaged AppImage - instead of logging a warning. Checked after
         packaging, against the real output, not a prediction: appimagetool
         bundles its own ``zsyncmake`` (its ``AppRun`` puts its own ``usr/bin``
         first on ``PATH``, ahead of anything on the build host's), so this
-        normally succeeds regardless of what the build host has installed —
+        normally succeeds regardless of what the build host has installed -
         it only fires for a genuinely broken or unusually minimal
         appimagetool build. Has no effect when ``update_info`` is empty.
     pylock : str
@@ -194,11 +194,11 @@ class BuildConfig:
         version and sha256 hash. When set, the build installs the local
         project itself (untouched, trusted source) with ``--no-deps``, then
         installs everything else from this file with ``pip install
-        --require-hashes`` — a compromised or typosquatted dependency
+        --require-hashes`` - a compromised or typosquatted dependency
         pulled in at build time is rejected instead of silently installed.
         Generate it with ``lock`` (see docs/reproducible-builds.md).
     require_pylock : bool
-        When true, abort the build if ``pylock`` is not set — instead of
+        When true, abort the build if ``pylock`` is not set - instead of
         logging a warning and installing dependencies unverified.
     build_pylock : str
         Path to a hash-pinned PEP 751 ``pylock.toml``-format file, relative
@@ -208,19 +208,19 @@ class BuildConfig:
         the project from source always triggers a PEP 517 isolated build,
         which otherwise installs that backend fresh from the index,
         unpinned and unverified, into that (throwaway) isolated
-        environment, on every build — a gap ``pylock`` does not cover,
+        environment, on every build - a gap ``pylock`` does not cover,
         since the local project itself is stripped out of it. When set,
         this file is converted to a classic hash-pinned constraints file
         and passed as ``pip install --build-constraint`` (pylock.toml
         isn't a format ``--build-constraint`` accepts directly), so pip's
-        own isolated build environment is still used — just hash-verified
+        own isolated build environment is still used - just hash-verified
         instead of resolved live, rather than installing the backend into
         the main interpreter with ``--no-build-isolation``, which would
         leave it permanently bundled in the shipped AppImage. Generated by
         ``lock`` alongside ``pylock`` (see
-        docs/reproducible-builds.md) — not something hand-written.
+        docs/reproducible-builds.md) - not something hand-written.
     require_build_pylock : bool
-        When true, abort the build if ``build_pylock`` is not set —
+        When true, abort the build if ``build_pylock`` is not set -
         instead of logging a warning and installing the build backend
         unverified.
     reproducible : bool
@@ -230,7 +230,7 @@ class BuildConfig:
         ``require_zsyncmake``, and additionally requires ``python_date``
         (or ``python_dir``), ``appimage_version``, ``appimage_sha256``,
         ``appimagetool_sha256``, and ``runtime_sha256`` to already be set
-        — resolving any of those fresh on every build is exactly what
+        - resolving any of those fresh on every build is exactly what
         defeats cross-machine reproducibility (see
         docs/reproducible-builds.md). Run ``init`` first to write them.
 
@@ -377,8 +377,8 @@ class _ResolvedBuild:
     require_build_pylock: bool
     reproducible: bool
     sources: dict[str, str]
-    # Split by which step each belongs to — AppDir assembly vs. packaging
-    # into the final .AppImage — so build_appdir() can enforce only what it
+    # Split by which step each belongs to - AppDir assembly vs. packaging
+    # into the final .AppImage - so build_appdir() can enforce only what it
     # actually needs, instead of demanding appimagetool/runtime pins it
     # never touches. build() enforces both; check() shows both.
     appdir_warnings: list[str]
@@ -485,7 +485,7 @@ def _detect_github_repo(project: dict[str, object]) -> tuple[str, str] | None:
     Checks well-known keys first (``source``, ``repository``, ``github``,
     ``code``, case-insensitive); falls back to scanning all url values only
     if exactly one matches the strict bare-repo pattern (no ``/issues``,
-    ``/blob/...`` paths — those aren't valid ``gh-releases-zsync`` targets).
+    ``/blob/...`` paths - those aren't valid ``gh-releases-zsync`` targets).
 
     Parameters
     ----------
@@ -524,7 +524,7 @@ def _suggest_update_info(
 ) -> str:
     """Suggest a ``gh-releases-zsync`` ``update_info`` string from ``[project.urls]``.
 
-    Never applied automatically — a wrong guess (private repo, no GitHub
+    Never applied automatically - a wrong guess (private repo, no GitHub
     Releases flow, different asset naming) would embed a plausible-looking
     but broken update pointer into the packaged AppImage. Only surfaced as
     a warning (``check``) and written by ``init``, same as every other
@@ -538,7 +538,7 @@ def _suggest_update_info(
         The ``[project]`` table.
     warnings : list[str]
         Appended to in place with a suggestion message when a repo is
-        found — avoids a second return value purely to shuttle it back to
+        found - avoids a second return value purely to shuttle it back to
         the caller's own warnings list.
 
     Returns
@@ -546,7 +546,7 @@ def _suggest_update_info(
     str
         The suggested string, or an empty string if no unambiguous GitHub
         repo could be identified (most projects don't want zsync updates,
-        and silence is correct there — nothing is appended to *warnings*).
+        and silence is correct there - nothing is appended to *warnings*).
 
     """
     repo = _detect_github_repo(project)
@@ -556,7 +556,7 @@ def _suggest_update_info(
     arch = platform.machine()
     suggestion = f"gh-releases-zsync|{owner}|{name}|latest|{app}-{arch}.AppImage.zsync"
     warnings.append(
-        f"update_info not set — detected GitHub repo {owner}/{name} from "
+        f"update_info not set - detected GitHub repo {owner}/{name} from "
         f'[project.urls]. Add update_info = "{suggestion}" in '
         "[tool.appimage] to enable zsync delta-updates, or run 'init' "
         "to write it automatically.",
@@ -620,7 +620,7 @@ def _resolve_icon_path(
     if icon is not None:
         return icon, f"detected ({icon.relative_to(project_root)})", []
     warning = (
-        f"No icon found — add {app}.png to the project root "
+        f"No icon found - add {app}.png to the project root "
         f"or set 'icon' in [tool.appimage]. "
         f"Using the built-in default icon."
     )
@@ -639,7 +639,7 @@ def _resolve_desktop_path(
     if desktop is not None:
         return desktop, f"detected ({desktop.relative_to(project_root)})", []
     warning = (
-        f"No .desktop file found — one will be generated from [project] metadata. "
+        f"No .desktop file found - one will be generated from [project] metadata. "
         f"Add {app}.desktop to customise it."
     )
     return None, "will be generated", [warning]
@@ -709,7 +709,7 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     # the bundled site-packages regardless of whether the packaged project
     # declares it as a dependency. Defaults to the currently running build's
     # own version, which keeps AppRun's expectations and the bundled runtime
-    # in sync — but that's an implicit pin, not a value committed to
+    # in sync - but that's an implicit pin, not a value committed to
     # pyproject.toml; set appimage_version explicitly (`init` does this) so
     # it doesn't silently vary with whichever appimage.ctl release built it.
     appimage_version = config.appimage_version or importlib.metadata.version("appimage")
@@ -724,7 +724,7 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     if config.python_archive and config.python_dir:
         appdir_errors.append(
             "Set at most one of python_archive or python_dir in "
-            "[tool.appimage] — which one would apply is ambiguous.",
+            "[tool.appimage] - which one would apply is ambiguous.",
         )
 
     verify_downloads = config.verify_downloads or config.reproducible
@@ -735,7 +735,7 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         if config.appimagectl_version != running_version:
             mismatch_msg = (
                 f"appimagectl_version expects {config.appimagectl_version}, but "
-                f"{running_version} is actually running — reproducibility may no "
+                f"{running_version} is actually running - reproducibility may no "
                 "longer hold if this build differs from the one that pinned it. "
                 "Update appimagectl_version once you've confirmed the new version "
                 "still builds the same way, or reinstall the expected version."
@@ -748,24 +748,24 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         if not config.python_dir and not config.python_date:
             appdir_errors.append(
                 "reproducible requires python_date (or python_dir) to be set "
-                "in [tool.appimage] — run 'init' to resolve and write it.",
+                "in [tool.appimage] - run 'init' to resolve and write it.",
             )
         appdir_errors.extend(
             f"reproducible requires {key} to be set in "
-            "[tool.appimage] — run 'init' to resolve and write it."
+            "[tool.appimage] - run 'init' to resolve and write it."
             for key in ("appimage_version", "appimage_sha256")
             if not getattr(config, key)
         )
         package_errors.extend(
             f"reproducible requires {key} to be set in "
-            "[tool.appimage] — run 'init' to resolve and write it."
+            "[tool.appimage] - run 'init' to resolve and write it."
             for key in ("appimagetool_sha256", "runtime_sha256")
             if not getattr(config, key)
         )
 
     if not config.pylock:
         pylock_msg = (
-            "No pylock configured — third-party dependencies are installed "
+            "No pylock configured - third-party dependencies are installed "
             "without hash verification. Run 'lock' to generate pylock.toml, "
             'then set pylock = "pylock.toml" in [tool.appimage].'
         )
@@ -773,7 +773,7 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
 
     if not config.build_pylock:
         build_pylock_msg = (
-            "No build_pylock configured — the packaged project's own "
+            "No build_pylock configured - the packaged project's own "
             "build backend (declared in its [build-system].requires) is "
             "installed without hash verification into the isolated build "
             "environment. Run 'lock' to generate it alongside pylock.toml."

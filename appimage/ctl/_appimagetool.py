@@ -30,12 +30,12 @@ _APPIMAGETOOL_ARCH_MAP: Final[dict[str, str]] = {
 def _appimagetool_cache_path(build_dir: Path, arch: str) -> Path:
     """Return the conventional build-cache path for a resolved appimagetool binary.
 
-    The one place encoding this filename convention — callers that need to
+    The one place encoding this filename convention - callers that need to
     know where appimagetool would be cached without actually resolving it
     (``build()``, ``init``, and ``check()``'s ``verify_downloads``
     prediction) all call this instead of reconstructing the f-string
     themselves. Note *arch* is the raw ``platform.machine()`` value, not
-    run through ``_APPIMAGETOOL_ARCH_MAP`` — that mapping only affects
+    run through ``_APPIMAGETOOL_ARCH_MAP`` - that mapping only affects
     which GitHub release asset gets downloaded, not the local cache
     filename.
     """
@@ -45,7 +45,7 @@ def _appimagetool_cache_path(build_dir: Path, arch: str) -> Path:
 def _runtime_cache_path(build_dir: Path, arch: str) -> Path:
     """Return the conventional build-cache path for a resolved AppImage runtime stub.
 
-    See ``_appimagetool_cache_path`` — same rationale, same raw-``arch``
+    See ``_appimagetool_cache_path`` - same rationale, same raw-``arch``
     convention.
     """
     return build_dir / f"runtime-{arch}"
@@ -55,8 +55,8 @@ def _runtime_cache_path(build_dir: Path, arch: str) -> Path:
 # bundled mksquashfs has a documented non-deterministic multi-threaded
 # compression bug, see https://github.com/AppImage/AppImageKit/issues/929)
 # and its own release notes now point downloads at this successor instead.
-# It bundles a modern, fixed squashfs-tools and — unlike AppImageKit's
-# "continuous" release — publishes a sha256 digest per asset via the
+# It bundles a modern, fixed squashfs-tools and - unlike AppImageKit's
+# "continuous" release - publishes a sha256 digest per asset via the
 # GitHub API, so it doubles as the source for the free-verification
 # digest used when appimagetool_sha256 is not explicitly configured.
 _APPIMAGETOOL_REPO: Final = "AppImage/appimagetool"
@@ -67,7 +67,7 @@ _APPIMAGETOOL_ASSET: Final = "appimagetool-{arch}.AppImage"
 # bundling it, which both defeats verification (nothing checks what was
 # fetched) and hangs in network environments where the tool's bundled
 # libcurl can't complete the download (e.g. behind certain TLS-intercepting
-# proxies) — pre-fetching and pinning it here avoids both problems.
+# proxies) - pre-fetching and pinning it here avoids both problems.
 _RUNTIME_REPO: Final = "AppImage/type2-runtime"
 _RUNTIME_ASSET: Final = "runtime-{arch}"
 
@@ -84,9 +84,9 @@ def _appimagetool_version_string(tool: Path) -> str:
 
 
 # Byte sequences that only turn up in a build of the classic, unmaintained
-# probonopd/AppImageKit appimagetool — never shipped stripped, so its own C
+# probonopd/AppImageKit appimagetool - never shipped stripped, so its own C
 # source tree's absolute paths leak into the binary as debug-info strings.
-# Checked as a set (any one is enough — each was individually confirmed to
+# Checked as a set (any one is enough - each was individually confirmed to
 # produce zero hits against a real AppImage/appimagetool build), not a
 # single bare "/AppImageKit/" substring: the current default's own
 # ``--help`` text incidentally links to ``github.com/AppImage/AppImageKit``'s
@@ -104,22 +104,22 @@ def _looks_like_classic_appimagekit(tool: Path) -> str | None:
     """Best-effort check for the classic, unmaintained AppImageKit ``appimagetool``.
 
     Its bundled ``mksquashfs`` has a documented non-deterministic
-    multi-threaded compression bug (AppImageKit#929) — the reason this
+    multi-threaded compression bug (AppImageKit#929) - the reason this
     project's own default download switched to the ``AppImage/appimagetool``
     fork instead (see ``_APPIMAGETOOL_REPO``). Hash-pinning
     (``appimagetool_sha256``) only proves *which exact file* is in use, not
     that it's the *right* one: an explicitly configured or cached binary
     that happens to be this classic build gets faithfully pinned and
     "verified" on every later build, silently defeating byte-for-byte
-    reproducibility the whole time — confirmed by hand: an otherwise fully
+    reproducibility the whole time - confirmed by hand: an otherwise fully
     pinned, ``--reproducible`` build still produced two different
     ``.AppImage`` files across two runs, traced back to exactly this
     (found back when this project's own resolution still searched ``PATH``
-    by default — since removed for exactly this reason, see
+    by default - since removed for exactly this reason, see
     ``_locate_appimagetool``).
 
-    Neither signal here is individually authoritative on its own — a future
-    release of either project could change — so two independent ones are
+    Neither signal here is individually authoritative on its own - a future
+    release of either project could change - so two independent ones are
     combined:
 
     - Debug-info strings leaking the classic build's own absolute source
@@ -131,7 +131,7 @@ def _looks_like_classic_appimagekit(tool: Path) -> str | None:
       even though today's isn't.
 
     Neither signal fires on the current default fork (verified against a
-    real build of each), but this is still a heuristic — its caller
+    real build of each), but this is still a heuristic - its caller
     (``_abort_if_classic_appimagekit``) treats a match as build-blocking, so
     a false positive would refuse a legitimate build. Deliberate trade-off:
     a silent non-deterministic build is worse than an occasional false
@@ -172,19 +172,19 @@ _CLASSIC_APPIMAGEKIT_DOC_URL: Final = (
 def _abort_if_classic_appimagekit(tool: Path) -> None:
     """Raise if *tool* looks like the classic, unmaintained AppImageKit appimagetool.
 
-    Kept short and pointed at the docs rather than explained in full here —
+    Kept short and pointed at the docs rather than explained in full here -
     see ``_looks_like_classic_appimagekit`` and
     ``docs/reproducible-builds.md``'s "Classic appimagetool detected"
     section for the full reasoning and the actual fix steps.
     """
     if reason := _looks_like_classic_appimagekit(tool):
         # Logged for troubleshooting only (below the CLI's default INFO
-        # level) — how this was detected isn't the user's problem, only
+        # level) - how this was detected isn't the user's problem, only
         # that it was and how to fix it, which the raised message covers.
         _log.debug("%s: %s", tool, reason)
         msg = (
             f"{tool} looks like the classic, unmaintained AppImageKit "
-            f"appimagetool — known non-deterministic mksquashfs "
+            f"appimagetool - known non-deterministic mksquashfs "
             f"(AppImageKit#929). Refusing to build with it. See "
             f"{_CLASSIC_APPIMAGEKIT_DOC_URL} for how to fix this."
         )
@@ -199,10 +199,10 @@ def _locate_appimagetool(
     """Return appimagetool's path, whether it was just downloaded, and its API-published sha256.
 
     Precedence: explicit config path, then the build cache, then a fresh
-    download — see ``_resolve_appimagetool`` for what each means for
+    download - see ``_resolve_appimagetool`` for what each means for
     verification. Deliberately never searches ``PATH`` (unlike an earlier
     version of this function): every other resolved external input in this
-    project — the bundled Python, the runtime stub — is explicit-config-or-
+    project - the bundled Python, the runtime stub - is explicit-config-or-
     download only, and appimagetool searching ``PATH`` was both the odd one
     out and, in practice, exactly how a stray classic AppImageKit build got
     silently picked up on a real machine (see
@@ -245,7 +245,7 @@ def _resolve_appimagetool(
 
     When ``appimagetool_sha256`` is set, the resolved binary is verified
     against it regardless of where it came from (explicit path, build
-    cache, or download) — a mismatch aborts the build. Only a binary this
+    cache, or download) - a mismatch aborts the build. Only a binary this
     function downloaded itself is deleted on mismatch, so a retry
     re-downloads cleanly; a user-configured path is never touched. A fresh
     download is additionally auto-verified against the digest GitHub
@@ -254,7 +254,7 @@ def _resolve_appimagetool(
     resolution with no pin configured is used unverified (with a warning
     logging its actual hash). Unless it was just downloaded
     (by definition from the right source), also checked against
-    ``_looks_like_classic_appimagekit`` — a match aborts the build outright,
+    ``_looks_like_classic_appimagekit`` - a match aborts the build outright,
     regardless of ``appimagetool_sha256``: pinning only proves it's the
     same (known-bad) file every time, not that it produces reproducible
     output.

@@ -18,8 +18,8 @@ def enable_reproducible(
     """Onboard a project onto reproducible builds in a single step.
 
     Equivalent to running ``init`` then ``lock``, then a real build with
-    ``reproducible`` enforced, and finally — only once that build has
-    actually succeeded — writing ``reproducible = true`` to
+    ``reproducible`` enforced, and finally - only once that build has
+    actually succeeded - writing ``reproducible = true`` to
     ``pyproject.toml``. Never writes the flag as a side effect of merely
     resolving or locking values: see docs/reproducible-builds.md for why
     that would be premature (the pins could still fail to build together).
@@ -41,7 +41,7 @@ def enable_reproducible(
     """
     write_config(config, project_root)
     # Re-read after each write so the next step sees the pins/locks that
-    # were just written, not a stale/unpinned config — same reasoning as
+    # were just written, not a stale/unpinned config - same reasoning as
     # the previous --init/--lock flag combo used to apply.
     config = BuildConfig.from_pyproject(project_root)
     lock(config, project_root, uploaded_prior_to=uploaded_prior_to)

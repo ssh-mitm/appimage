@@ -4,7 +4,7 @@
 This package is organized by CLI subcommand: each submodule implements one
 subcommand (or a small group of shared low-level helpers), depending only on
 ``_base`` (shared ``BuildConfig``/``_ResolvedBuild``/``_resolve()`` machinery)
-and on each other — never back on this ``__init__.py`` itself, so the import
+and on each other - never back on this ``__init__.py`` itself, so the import
 graph stays a plain DAG with no cycles. This module's only job is to compose
 the public API from those submodules, so ``appimage.ctl.__main__`` (and
 anything else) can keep importing it exactly as before the split.

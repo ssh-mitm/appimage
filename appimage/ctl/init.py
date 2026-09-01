@@ -36,7 +36,7 @@ def _auto_detected_fields(
         new["app"] = resolved.app
     # An empty source means _resolve_entry_point couldn't determine one and
     # fell back to *app* as a placeholder alongside an error in
-    # resolved.appdir_errors — writing that guess here would silently turn
+    # resolved.appdir_errors - writing that guess here would silently turn
     # a loud check error into a wrong-but-configured value.
     if "entry_point" not in existing and resolved.sources.get("entry_point"):
         new["entry_point"] = resolved.entry_point
@@ -115,10 +115,10 @@ def write_config(config: BuildConfig, project_root: Path) -> None:
     When ``python_date`` isn't already configured, this resolves whatever
     python-build-standalone currently publishes as latest and writes its
     release date, plus ``python_sha256`` when GitHub publishes a digest
-    for it — a lightweight API call, no tarball download. When
+    for it - a lightweight API call, no tarball download. When
     ``appimagetool_version``/``appimagetool_sha256`` are not already
     configured, this also resolves appimagetool (via the same lookup order
-    as a real build — explicit path, ``PATH``, build cache, or download) and
+    as a real build - explicit path, ``PATH``, build cache, or download) and
     writes its sha256 and self-reported version banner, so a subsequent
     build can pin against exactly this binary. The same applies to
     ``runtime_sha256`` and the runtime ELF stub. Together these may trigger
@@ -146,7 +146,7 @@ def write_config(config: BuildConfig, project_root: Path) -> None:
 
     if not new:
         _log.info("")
-        _log.info("Nothing to add — all detected values are already configured.")
+        _log.info("Nothing to add - all detected values are already configured.")
         return
 
     lines = "\n".join(f"{k} = {_toml_value(v)}" for k, v in new.items())

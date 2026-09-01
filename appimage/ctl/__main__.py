@@ -219,7 +219,7 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
             "time: implies --verify-downloads and --require-zsyncmake, and "
             "requires python_date, appimagetool_sha256, and runtime_sha256 "
             "to already be set (run 'init' first to write them). Does not "
-            "resolve or write any values itself — see the 'enable-reproducible' "
+            "resolve or write any values itself - see the 'enable-reproducible' "
             "command to also persist this permanently."
         ),
     )
@@ -233,7 +233,7 @@ def _add_uploaded_prior_to_argument(parser: argparse.ArgumentParser) -> None:
         metavar="PnD",
         help=(
             "Cooldown window passed through to 'pip lock --uploaded-prior-to' "
-            "(ISO 8601 PnD format, e.g. P7D) — excludes packages published "
+            "(ISO 8601 PnD format, e.g. P7D) - excludes packages published "
             "more recently than that from the resolution."
         ),
     )
@@ -294,7 +294,7 @@ def _parse_args() -> argparse.Namespace:
         parents=[common, lock_only],
         help=(
             "Pin the toolchain, generate both lock files, then run a real "
-            "build with reproducible enforced — and only once that build "
+            "build with reproducible enforced - and only once that build "
             "succeeds, write reproducible = true to pyproject.toml."
         ),
     )
@@ -303,7 +303,7 @@ def _parse_args() -> argparse.Namespace:
         parents=[common],
         help=(
             "Assemble the AppDir (Python, packages, assets, hooks, bytecode, "
-            "build-path scrubbing) without packaging it into an .AppImage — "
+            "build-path scrubbing) without packaging it into an .AppImage - "
             "the result can be tested, inspected, or deployed some other way. "
             "Only requires the AppDir-side reproducibility pins, not "
             "appimagetool_sha256/runtime_sha256."
@@ -314,9 +314,9 @@ def _parse_args() -> argparse.Namespace:
         parents=[common],
         help=(
             "Move every toolchain pin forward to whatever's currently "
-            "available — python_date, appimage_version/appimage_sha256, "
+            "available - python_date, appimage_version/appimage_sha256, "
             "appimagetool_version/appimagetool_sha256, runtime_sha256, and "
-            "appimagectl_version — overwriting what's already configured. "
+            "appimagectl_version - overwriting what's already configured. "
             "Unlike 'init', which only fills in what's missing. Leaves "
             "pylock/build_pylock (regenerate those with 'lock') and project "
             "metadata untouched."
