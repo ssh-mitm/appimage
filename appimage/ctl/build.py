@@ -4,7 +4,9 @@
 import logging
 import os
 import platform
+import shutil
 import subprocess  # nosec B404
+import tempfile
 from pathlib import Path
 from typing import Final
 
@@ -55,23 +57,57 @@ def build(config: BuildConfig, project_root: Path) -> None:
     dist_dir.mkdir(parents=True, exist_ok=True)
     output_name = f"{resolved.app}-{arch}.AppImage"
 
-    cmd = [str(appimagetool_bin), "--runtime-file", str(runtime_bin)]
-    if resolved.update_info:
-        cmd += ["-u", resolved.update_info]
-    cmd += [str(appdir), output_name]
-
     _log.info("Packaging AppImage...")
-    subprocess.run(  # noqa: S603  # nosec B603
-        cmd,
-        cwd=dist_dir,
-        env={**os.environ, "SOURCE_DATE_EPOCH": str(epoch)},
-        check=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="appimagectl-runtime-") as staging_dir:
+        staged_runtime = _stage_runtime_file_for_appimagetool(
+            runtime_bin,
+            Path(staging_dir),
+        )
+        cmd = [str(appimagetool_bin), "--runtime-file", str(staged_runtime)]
+        if resolved.update_info:
+            cmd += ["-u", resolved.update_info]
+        cmd += [str(appdir), output_name]
+
+        subprocess.run(  # noqa: S603  # nosec B603
+            cmd,
+            cwd=dist_dir,
+            env={**os.environ, "SOURCE_DATE_EPOCH": str(epoch)},
+            check=True,
+        )
 
     if resolved.update_info:
         _check_zsync_file(dist_dir, output_name, require=resolved.require_zsyncmake)
 
     _log.info("Done: %s", dist_dir / output_name)
+
+
+def _stage_runtime_file_for_appimagetool(runtime_bin: Path, staging_dir: Path) -> Path:
+    """Copy *runtime_bin* into *staging_dir* and return the copy's path.
+
+    Works around a bug in the pinned ``AppImage/appimagetool`` build itself
+    (confirmed by hand, isolated from appimagectl entirely): its glib-based
+    CLI option parser fails to decode a ``--runtime-file`` value containing
+    any non-ASCII byte — ``Option parsing failed: Invalid byte sequence in
+    conversion input`` — reproducible regardless of the process's own
+    locale (tested ``de_DE.UTF-8`` and ``C.UTF-8``) and regardless of
+    ``G_FILENAME_ENCODING``/``G_BROKEN_FILENAMES``, so it isn't something
+    appimagectl can fix by adjusting the subprocess environment. The
+    *positional* AppDir/output arguments are unaffected — only this one
+    flag's value goes through whatever stricter path glib uses for it.
+    ``runtime_bin`` is ``project_root / build_dir / f"runtime-{arch}"``, so
+    any project whose absolute path contains a non-ASCII character (a very
+    ordinary thing — e.g. a home directory under a non-English username)
+    would otherwise fail packaging outright, 100% of the time. Staging a
+    plain copy under a guaranteed-ASCII temp path sidesteps the bug
+    entirely: the flag value itself never contains anything that could
+    trip it, independent of where the project actually lives. Purely a
+    workaround for appimagetool's own argument parsing — the copy's
+    *content* is byte-identical to ``runtime_bin`` and has no bearing on
+    the packaged output.
+    """
+    staged = staging_dir / runtime_bin.name
+    shutil.copy2(runtime_bin, staged)
+    return staged
 
 
 def _check_zsync_file(dist_dir: Path, output_name: str, *, require: bool) -> None:

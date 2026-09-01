@@ -580,14 +580,25 @@ def _relocate_console_script(content: bytes, executable: bytes) -> bytes | None:
     "bad interpreter: no such file or directory", even unmoved, since
     ``$(...)`` is never evaluated.
 
+    *executable* is also tried wrapped in double quotes: ``pip._vendor.
+    distlib.scripts.enquote_executable`` wraps it in ``"..."`` whenever it
+    contains a space (e.g. a build path with a space in it) before
+    ``_build_shebang`` embeds it — and a space anywhere also forces the
+    two-line form regardless of length, since ``_build_shebang`` treats any
+    embedded space as "too complex" for the simple one-line form the same
+    way it treats an overlong path. Confirmed by hand: without matching the
+    quoted form too, a build path with a space in it silently fell through
+    to the delete fallback below for every console-script shim, dropping
+    ``AppDir/python/bin/<entry-point>`` entirely instead of relocating it.
+
     Parameters
     ----------
     content : bytes
         The shim file's current content.
     executable : bytes
         The absolute interpreter path distlib embedded (what installed it,
-        e.g. ``.../AppDir/python/bin/python3``) — must match exactly for
-        either pattern to be recognized.
+        e.g. ``.../AppDir/python/bin/python3``) — must match exactly
+        (optionally double-quoted) for either pattern to be recognized.
 
     Returns
     -------
@@ -600,13 +611,14 @@ def _relocate_console_script(content: bytes, executable: bytes) -> bytes | None:
     replacement = _self_locating_python(python_bin_name)
     new_prefix = b"#!/bin/sh\n'''exec' " + replacement + b' "$0" "$@"\n' + b"' '''\n"
 
-    two_line = b"#!/bin/sh\n'''exec' " + executable + b' "$0" "$@"\n' + b"' '''\n"
-    if content.startswith(two_line):
-        return new_prefix + content[len(two_line) :]
+    for embedded in (executable, b'"' + executable + b'"'):
+        two_line = b"#!/bin/sh\n'''exec' " + embedded + b' "$0" "$@"\n' + b"' '''\n"
+        if content.startswith(two_line):
+            return new_prefix + content[len(two_line) :]
 
-    one_line = b"#!" + executable + b"\n"
-    if content.startswith(one_line):
-        return new_prefix + content[len(one_line) :]
+        one_line = b"#!" + embedded + b"\n"
+        if content.startswith(one_line):
+            return new_prefix + content[len(one_line) :]
 
     return None
 
