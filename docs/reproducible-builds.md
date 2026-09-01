@@ -75,8 +75,10 @@ cross-machine reproducibility](#pinning-for-cross-machine-reproducibility).
 point, without building anything:
 
 ```
-Reproducibility checklist (1/3 ready):
-  ✓ Reproducibility: 3/3 pins set
+Reproducibility checklist (3/5 ready):
+  ✓ AppDir reproducibility: python_date set
+  ✓ Runtime module reproducibility: appimage_version, appimage_sha256 set
+  ✓ Packaging reproducibility: appimagetool_sha256, runtime_sha256 set
   ✗ Dependency verification: pylock not set — run 'lock' to generate pylock.toml
   ✗ Build backend verification: build_pylock not set — run 'lock' to generate it alongside pylock.toml
 ```
@@ -93,15 +95,13 @@ independent fixes — any one missing was enough to make two builds differ,
 even with everything else already correct:
 
 1. **Bytecode.** `pip install`'s default `.pyc` cache embeds the
-   install-time mtime of each source file in the invalidation header.
-   Installed at a different wall-clock time, same source → different
-   `.pyc` bytes. Fixed by compiling with `--invalidation-mode
-   unchecked-hash` instead, which ties validity to a content hash —
-   forced (`-f`) to also override any `.pyc` a module already got from
-   merely being *imported* earlier in the build (e.g. a build backend),
-   which carries the same install-time-mtime problem and would otherwise
-   be left untouched. See [internals.md](internals.md#building-manually)
-   for where this was actually found.
+   install-time mtime of each source file. Installed at a different
+   wall-clock time, same source → different `.pyc` bytes. Fixed by
+   compiling with `--invalidation-mode unchecked-hash` instead
+   (hash-based validity), forced (`-f`) to also catch any `.pyc` a module
+   already picked up from merely being *imported* earlier in the build.
+   See [internals.md](internals.md#building-manually) for where this was
+   actually found.
 2. **File timestamps.** `mksquashfs` embeds each file's mtime in the
    packed image. Every file `appimage.ctl` installs or generates gets
    its mtime normalized to a fixed value (`SOURCE_DATE_EPOCH`,
@@ -128,91 +128,71 @@ even with everything else already correct:
    of both non-determinism and an unverified download. `appimage.ctl`
    pre-fetches and pins it instead, then hands it to appimagetool via
    `--runtime-file` so no live download happens.
-6. **The build machine's own absolute path.** Three separate mechanisms
-   bake the build directory's absolute path — and with it, typically, the
-   building user's own name via `$HOME` — into files that end up inside
-   the AppImage: `compileall`'s `co_filename`, stray `.pyc` files CPython
-   writes the moment a build step merely *imports* a stdlib module that
-   has none yet, and pip's own install-time bookkeeping (`direct_url.json`,
-   console-script shims) for the locally-installed project. None of these
-   vary the build's *behavior* — only its bytes — but that's still enough
-   to make two builds of the identical source differ if run from two
-   different checkout locations, e.g. two different developers' home
-   directories, or two CI providers with different checkout paths. Fixed
-   by compiling with `-s <site-packages>` to strip the path from every
-   code object, `PYTHONDONTWRITEBYTECODE=1` on every subprocess that runs
-   the bundled interpreter so nothing gets compiled outside that
-   controlled step in the first place, and handling the two pip artifacts
-   (discovered via each package's own `RECORD` — the same manifest pip
-   wrote when installing it — rather than by guessing at pip's script
-   format, since that format has more than one variant in practice):
-   `direct_url.json` is deleted (it exists only to record *where this came
-   from*, meaningless for an AppDir that runs somewhere else entirely, and
-   nothing reads it at runtime), while console-script shims are relocated
-   in place instead — their shebang rewritten to find the bundled
-   interpreter relative to their own location on disk (the same trick
-   python-build-standalone's own bundled `pip` already uses) rather than
-   deleted outright, so `AppDir/python/bin/<entry-point>` keeps working
-   for anyone using the AppDir directly. A final sweep of the whole AppDir
-   for the build path, after all of the above, turns "did this actually
-   work" into something the build itself verifies on every run rather than
-   something that has to be checked by hand.
+6. **The build machine's own absolute path.** Compiled bytecode, stray
+   stdlib `.pyc` files, and pip's own install-time bookkeeping
+   (`direct_url.json`, console-script shims) all bake the build
+   directory's absolute path — and via `$HOME`, typically the building
+   user's own name — into files that ship inside the AppImage. That's
+   enough to make two builds of identical source differ if run from
+   different checkout locations, e.g. two developers' home directories or
+   two CI providers. Fixed by compiling with `-s <site-packages>` to
+   strip the path from every code object, `PYTHONDONTWRITEBYTECODE=1` on
+   every subprocess so nothing compiles outside that controlled step, and
+   scrubbing pip's two artifacts: `direct_url.json` is deleted (it only
+   records *where this came from*, meaningless once the AppDir runs
+   somewhere else), while console-script shims are relocated in place —
+   shebang rewritten to find the bundled interpreter relative to their
+   own location, so `AppDir/python/bin/<entry-point>` keeps working for
+   anyone using the AppDir directly (see [internals.md](internals.md) for
+   the mechanism). A final sweep of the whole AppDir for the build path
+   turns "did this actually work" into something the build verifies on
+   every run rather than something checked by hand.
 
 See [internals.md](internals.md) for exactly where each of these fits in
-the build sequence.
+the build sequence, and [For LLMs and coding agents](llms.md) for the
+full mechanism-level detail behind each fix.
 
 ## Classic appimagetool detected
 
-`appimage.ctl` resolves appimagetool in this order: an explicit
-`appimagetool` config path, then `PATH`, then its own build cache, and
-only then a fresh download (see ["The packer itself" above](#why-this-is-hard),
-item 3).
+appimagetool is resolved from an explicit `appimagetool` config path,
+then the build cache, then a fresh download — `PATH` is never searched
+(see ["The packer itself" above](#why-this-is-hard), item 3).
 
 **This is the exception, not the rule.** A project that never sets
-`appimagetool` and whose build host never happened to have one on `PATH`
-always takes the fourth branch — a verified download of the current
-[`AppImage/appimagetool`](https://github.com/AppImage/appimagetool)
-default, cached for next time. That cached copy is safe on every later
-build too: nothing but this project's own download step ever writes to
-it, so once it holds a verified download, it stays one. The check exists
-for exactly two situations where a *different* binary enters the picture:
+`appimagetool` always takes the download branch: a verified fetch of the
+current [`AppImage/appimagetool`](https://github.com/AppImage/appimagetool)
+default, cached for next time. That cached copy stays safe on every later
+build too — nothing but this project's own download step ever writes to
+it. The check below exists for the two remaining ways a *different*
+binary can still end up in use:
 
-- **Unintentional:** something else on the build host already put an
-  `appimagetool` on `PATH` — plausibly the classic, unmaintained
-  `AppImageKit` build, since that's what most generic AppImage tutorials
-  install. Common on a developer's own machine, less likely on a
-  from-scratch CI runner.
-- **Intentional:** `appimagetool` is explicitly set in `[tool.appimage]`,
-  typically for an offline/air-gapped build (see below) — worth double
-  checking it's actually pointing at an `AppImage/appimagetool` build, not
-  a copy of the classic one someone grabbed years ago.
+- An `appimagetool` path set explicitly in `[tool.appimage]`, typically
+  for an offline/air-gapped build (see below) — worth double-checking
+  it's actually an `AppImage/appimagetool` build, not a copy of the
+  classic one grabbed years ago.
+- A build cache seeded by hand rather than by `appimage.ctl`'s own
+  download step.
 
-Either way, pinning `appimagetool_sha256` doesn't protect against this: it
-only proves the same file is used every time, not that it's the *right*
-file — the classic build's non-deterministic `mksquashfs` (see item 3)
-would still produce a different `.AppImage` on every run, just with a
-build that "successfully" verifies its own hash each time. So the build
-aborts instead of just warning when the resolved binary looks like the
-classic build — based on debug-info strings from its own source tree
-still present in the binary, or (if those were stripped) its `--version`
-banner's own wording. Neither signal is airtight on its own, which is
-exactly why the abort happens instead of a best-effort guess being
-trusted silently.
+Pinning `appimagetool_sha256` doesn't catch either case: it only proves
+the same file is used every time, not that it's the *right* file — the
+classic build's non-deterministic `mksquashfs` (see item 3) still
+produces a different `.AppImage` on every run, just with a build that
+"successfully" verifies its own hash each time. So the build aborts
+instead of just warning when the resolved binary looks like the classic
+build — based on debug-info strings from its own source tree still
+present in the binary, or, if those were stripped, its `--version`
+banner's wording. Neither signal is airtight alone, which is why a match
+aborts rather than being silently trusted.
 
 **Fix — network available (the common case):** stop pointing at the
-classic build and let `appimage.ctl` fetch the right one itself, no
-manual download needed.
+classic build and let `appimage.ctl` fetch the right one itself.
 
-- If it's on `PATH` (`which appimagetool`), remove or rename it, or move
-  it later in `PATH` than wherever you want a real resolution to come
-  from.
-- If it's in the build cache (`<build_dir>/appimagetool-<arch>.AppImage`),
-  delete that file — this shouldn't normally happen (see above), but if
-  it was seeded by hand, deleting it makes the next build download a
-  fresh, correct one.
 - If `appimagetool` is set explicitly in `[tool.appimage]`, either unset
-  it (falls through to `PATH`/cache/download) or point it at a real
+  it (falls through to cache/download) or point it at a real
   `AppImage/appimagetool` build (see below).
+- If it's in the build cache (`<build_dir>/appimagetool-<arch>.AppImage`)
+  from being seeded by hand, delete that file so the next build downloads
+  a fresh, correct one.
 
 Then rerun `init` (or just the build) to re-resolve and re-pin
 `appimagetool_sha256` against the correct binary.
@@ -432,16 +412,11 @@ AppImage actually bundles. `lock` also reads `extras`/`packages` from
 and stay in the lock with their own hash like any other dependency — only
 the local project (`.`/`.[extras]`) has no stable hash to pin between
 source edits, so it's installed separately at build time (below) instead.
-Excluding *just* the local project sounds like a job for `pip lock
---only-deps`, but that flag excludes *every* given requirement from its
-output, not a chosen one ("No user-supplied requirements will be handled,
-even if they were dependencies of other user-supplied requirements" per
-its own `--help`) — using it here would have silently dropped
-`appimage`'s and `packages`' own pins too, leaving only their transitive
-dependencies locked. `lock` instead resolves everything together
-without `--only-deps`, then strips just the local project's entry from
-the resulting file afterwards, identified structurally by its local
-directory source rather than by name.
+`lock` resolves everything together, then strips just the local project's
+entry from the result afterwards — deliberately not via `pip lock
+--only-deps`, which excludes *every* given requirement, not a chosen one,
+and would have dropped `appimage`'s and `packages`' own pins too (see
+[For LLMs and coding agents](llms.md) for the full reasoning).
 
 ### What the real build does with it
 
@@ -449,17 +424,19 @@ With `pylock` configured, `_prepare_python` runs two separate `pip
 install` calls instead of one:
 
 ```sh
-pip install --no-compile --no-deps .[extras]                       # local source, trusted, unhashed
-pip install --no-compile --no-deps --require-hashes -r pylock.toml # everything else, hash-verified
+pip install --no-compile --no-deps .[extras]              # local source, trusted, unhashed
+pip install --no-compile --require-hashes -r pylock.toml  # everything else, hash-verified
 ```
 
 Two calls, not one, because pip's hash-checking mode — triggered the
 moment any requirement in a given invocation carries a hash — then demands
 *every* requirement in that same invocation carry one; mixing the unhashed
 local project into the `--require-hashes` call would fail outright.
-`--no-deps` on both keeps each strictly to what it's given: the local
-install won't reach past its own listed dependencies, and the lock install
-won't silently pull in anything beyond what got hashed.
+`--no-deps` on the local install keeps it strictly to its own listed
+dependencies. The lock install deliberately omits `--no-deps`: pip still
+checks each locked package's declared dependencies against what
+`pylock.toml` provides, so a stale or incomplete lock aborts loudly here
+instead of silently installing an AppDir missing a transitive dependency.
 
 ### Cooldowns
 
@@ -555,17 +532,11 @@ hash-pinned constraints file at install time and passed as
 `--build-constraint` when installing the project itself — pip still
 builds it in its own fresh, throwaway isolated environment; only what
 gets installed *into* that environment is now hash-verified instead of
-resolved live. An earlier approach installed the backend directly into
-the main interpreter with `--no-build-isolation` instead, reusing it for
-the project build — that avoided the format mismatch too, but left the
-build backend permanently installed in the shipped AppImage (on top of
-python-build-standalone's own bundled `pip`/`setuptools`, kept
-deliberately for `--python-interpreter -m pip`/venv support — see
-[Runtime](runtime.md)),
-and its own import-time bytecode caches carried install-time timestamps
-that broke byte-for-byte reproducibility across independent builds.
-`--build-constraint` avoids both problems by keeping the build properly
-isolated.
+resolved live. (An earlier approach installed the backend directly into
+the main interpreter with `--no-build-isolation` instead — left it
+permanently installed in the shipped AppImage and broke reproducibility
+via its own install-time bytecode timestamps; see [For LLMs and coding
+agents](llms.md) for why that was dropped.)
 
 `require_build_pylock = true` aborts the build instead of warning when
 `build_pylock` isn't set, mirroring `require_pylock`.

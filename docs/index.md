@@ -11,6 +11,7 @@ reproducible-builds
 runtime
 internals
 develop/index
+llms
 changelog
 ```
 
@@ -23,7 +24,7 @@ It bundles a complete Python distribution from [python-build-standalone](https:/
 ```{note}
 AppImage is a Linux-only format. Building and running AppImages requires Linux.
 Supported architectures: **x86_64**, **aarch64**, **armv7**.
-[appimagetool](https://github.com/AppImage/appimagetool) is resolved automatically: if it is already on `PATH` it is used as-is; otherwise the build cache is checked, and finally it is downloaded. The same caching logic applies to the bundled Python distribution. Set `appimagetool_sha256` in `[tool.appimage]` to verify whichever binary gets resolved, regardless of source — see [Reproducible builds](reproducible-builds.md).
+[appimagetool](https://github.com/AppImage/appimagetool) is resolved automatically: the build cache is checked first, then it is downloaded (`PATH` is never searched). The same caching logic applies to the bundled Python distribution. Set `appimagetool_sha256` in `[tool.appimage]` to verify whichever binary gets resolved — see [Reproducible builds](reproducible-builds.md).
 ```
 
 ## Install
@@ -61,8 +62,10 @@ Build configuration:
   build_dir:      build                                [default]
   dist_dir:       dist                                 [default]
 
-  Reproducibility checklist (0/3 ready):
-    ✗ Reproducibility: 0/3 pins set (python_date, appimagetool_sha256, runtime_sha256) — run 'init' to resolve and pin them
+  Reproducibility checklist (0/5 ready):
+    ✗ AppDir reproducibility: python_date not set — run 'init' to resolve and pin it, or set python_dir
+    ✗ Runtime module reproducibility: appimage_version, appimage_sha256 not set — run 'init' to resolve and pin them
+    ✗ Packaging reproducibility: appimagetool_sha256, runtime_sha256 not set — run 'init' to resolve and pin them
     ✗ Dependency verification: pylock not set — run 'lock' to generate pylock.toml
     ✗ Build backend verification: build_pylock not set — run 'lock' to generate it alongside pylock.toml
 ```
@@ -76,3 +79,9 @@ python -m appimage.ctl init
 ```
 
 Adds only the auto-detected fields that are not already set — so you can review and adjust them.
+
+## Using a coding agent?
+
+See [For LLMs and coding agents](llms.md) for a dense reference — module
+map and the non-obvious invariants worth knowing before changing anything
+in this codebase.

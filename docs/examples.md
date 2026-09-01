@@ -86,12 +86,13 @@ true` to make an unpinned local path a hard error too, instead of just a warning
 **Resolution order for appimagetool:**
 
 1. Path from `--appimagetool` / `appimagetool` config key
-2. `appimagetool` found on `PATH`
-3. Cached binary in `build/appimagetool-<arch>.AppImage`
-4. Downloaded from GitHub
+2. Cached binary in `build/appimagetool-<arch>.AppImage`
+3. Downloaded from GitHub
 
+`PATH` is never searched — see [Classic appimagetool
+detected](reproducible-builds.md#classic-appimagetool-detected) for why.
 Whichever binary is resolved is verified against `appimagetool_sha256` when set,
-regardless of which step it came from. A fresh download (step 4) is additionally
+regardless of which step it came from. A fresh download (step 3) is additionally
 auto-verified against GitHub's published digest even when `appimagetool_sha256` is
 unset.
 

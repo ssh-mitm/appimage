@@ -1,0 +1,23 @@
+# appimage
+
+> Packages Python applications as self-contained, byte-for-byte reproducible AppImages. CLI: `appimagectl` / `python -m appimage.ctl`. Config lives entirely under `[tool.appimage]` in the packaged project's own `pyproject.toml`.
+
+Full documentation: https://appimage.readthedocs.io
+
+## Start here
+
+- [README](https://github.com/ssh-mitm/appimage/blob/main/README.md): quick start, install, the reproducibility claim
+- [CLI Reference](https://appimage.readthedocs.io/en/latest/cli.html): every subcommand and flag
+- [Configuration](https://appimage.readthedocs.io/en/latest/configuration.html): every `[tool.appimage]` key
+- [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html): what's automatic, what needs pinning, dependency/build-backend hash-verification
+
+## For coding agents
+
+- [For LLMs and coding agents](https://appimage.readthedocs.io/en/latest/llms.html): module map, invariants that must not regress (each one a real, previously-shipped bug), how this project verifies changes end to end rather than trusting mocks alone
+
+## Reference
+
+- [How AppImages are built](https://appimage.readthedocs.io/en/latest/internals.html): the manual process this tool automates
+- [Runtime](https://appimage.readthedocs.io/en/latest/runtime.html): the `--python-*` flags available inside a built AppImage
+- [Development](https://appimage.readthedocs.io/en/latest/develop/index.html): working on this project itself
+- [Changelog](https://github.com/ssh-mitm/appimage/blob/main/CHANGELOG.md)

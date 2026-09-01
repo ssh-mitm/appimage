@@ -181,16 +181,11 @@ build/AppDir/python/bin/python3 -m compileall -qf \
   build/AppDir/python/lib/python3.x/site-packages
 ```
 
-`-f` (force) matters here, not just as a nicety: bytecode caching happens the moment
-something merely *imports* a module — not only when pip compiles it — so any earlier
-step in the build that imports a package (a build backend invoked to build the local
-project's wheel, a lifecycle hook, anything) can leave behind a `.pyc` already
-timestamp-invalidated, with that wall-clock value baked in. Without `-f`,
-`compileall` sees an existing, valid-looking `.pyc` and leaves it alone instead of
-regenerating it in hash-based mode — reintroducing exactly the non-determinism this
-step exists to eliminate, just through a side door. This was found by diffing two
-independently built AppImages of the same project byte-for-byte and tracing the
-differing files back to their timestamp-invalidated `.pyc` headers.
+`-f` (force) matters here: merely *importing* a module — not just pip compiling it —
+can leave behind a `.pyc` already timestamp-invalidated by an earlier build step (a
+build backend, a lifecycle hook). Without `-f`, `compileall` leaves an
+existing-looking `.pyc` alone instead of regenerating it in hash-based mode,
+reintroducing the same non-determinism through a side door.
 
 ### Step 5 — Write the AppRun script
 
@@ -357,13 +352,17 @@ to `SOURCE_DATE_EPOCH` (default: the Unix epoch) right before packaging, and the
 value is passed into appimagetool's own process environment, since it touches a few
 paths of its own (e.g. `.DirIcon`) that AppDir-side normalization can't reach.
 
-**appimagetool and runtime verification** — when `appimagetool_sha256`/`runtime_sha256`
-are set, the resolved binary (explicit path, `PATH`, build cache, or download — any of
-them for appimagetool; build cache or download for the runtime file) is verified
-against it before use; a mismatch aborts the build loudly rather than silently packing
-with an unexpected binary (see Step 8). The runtime file is always pre-fetched and
-passed via `--runtime-file`, so appimagetool never triggers its own live download.
-`verify_downloads` turns an unpinned resolution into a hard error instead of a warning.
+**appimagetool and runtime verification** — appimagetool is resolved from an explicit
+path, then the build cache, then a download; the runtime file the same way minus the
+explicit-path step (`PATH` is never searched for either — see [Classic appimagetool
+detected](reproducible-builds.md#classic-appimagetool-detected)). When
+`appimagetool_sha256`/`runtime_sha256` are set, the resolved binary is verified against
+it before use; a mismatch aborts the build loudly rather than silently packing with an
+unexpected binary (see Step 8). appimagetool is also checked against known signs of the
+classic, non-deterministic build regardless of any pin, and refused outright on a match.
+The runtime file is always pre-fetched and passed via `--runtime-file`, so appimagetool
+never triggers its own live download. `verify_downloads` turns an unpinned resolution
+into a hard error instead of a warning.
 
 **Dependency and build-backend verification** — with `pylock`/`build_pylock` set,
 third-party dependencies and the project's own `[build-system].requires` backend are
