@@ -342,6 +342,57 @@ is better than a range, but still isn't hash-verified - if the release
 on PyPI can't change after publishing, either is fine; if you don't want
 to depend on that, use the hash form above.
 
+### The exact packaging command line
+
+For anyone trying to reproduce or debug a build by hand, this is the
+full, effective command line `build()` runs - `appimage/ctl/build.py`,
+not paraphrased:
+
+```sh
+appimagetool --runtime-file <staged copy of runtime_sha256's file> \
+  --mksquashfs-opt -no-xattrs \
+  --mksquashfs-opt -no-duplicates \
+  [-u <update_info>] \
+  <AppDir> <app>-<arch>.AppImage
+```
+
+Run with `cwd` set to `dist_dir` and `SOURCE_DATE_EPOCH` set in the
+environment (`0` unless already set by the caller). `-no-xattrs` and
+`-no-duplicates` are unconditional - not configurable, not skippable -
+for the reasons in the `## Fixed` entries of the changelog: build-host
+xattrs (e.g. SELinux labels) otherwise leak into the image, and
+mksquashfs's duplicate-detection pre-filter otherwise makes the packaged
+bytes sensitive to incidental per-build state even from an unchanged
+AppDir.
+
+appimagetool itself then builds its own `mksquashfs` invocation
+(`sfs_mksquashfs()` in `AppImage/appimagetool`'s `appimagetool.c` -
+read directly from source, not inferred from behavior):
+
+```sh
+mksquashfs <AppDir> <destination> \
+  -offset <runtime size in bytes> \
+  -comp zstd \
+  -root-owned \
+  -noappend \
+  -b 128K \
+  [-wildcards -ef .appimageignore]   # only if that file exists in cwd
+  [-mkfs-time 0]                     # only if SOURCE_DATE_EPOCH is NOT set in the environment
+  <our --mksquashfs-opt flags, appended last>
+```
+
+The `-mkfs-time 0` branch is normally *not* taken in this project's own
+builds, since `SOURCE_DATE_EPOCH` is always set - mksquashfs reads it
+from the environment directly instead. `-offset` is how appimagetool
+appends the squashfs image after the runtime ELF stub in one file rather
+than concatenating two files afterward; `-comp`/`-b` come from
+appimagetool's own defaults for zstd, not from this project.
+
+If you're trying to reproduce a specific build outside this tool
+entirely - to bisect a divergence, or to verify a release by hand - this
+is the actual, complete set of arguments both tools receive; nothing
+else is passed.
+
 ### AppDir-only builds need fewer pins
 
 `build-appdir` assembles the AppDir - installing Python and packages,
