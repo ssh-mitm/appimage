@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `update-tools` no longer leaves `python_date` pinned to its old value - it now re-resolves against python-build-standalone's latest release, same as the other toolchain pins it moves forward. `_pinned_download_fields` looked up `resolved.python_date` (the value already configured, not "unset") instead of resolving "latest", so a project with `python_date` already pinned had it looked up again by its own tag and echoed back unchanged - a no-op disguised as an update. Found packaging `ssh-mitm` as an AppImage: `update-tools` reported success but `python_date` never moved past a February release, months after newer ones had shipped.
+- `update-tools` now actually moves an already-pinned `python_date` forward instead of re-resolving the same old date
 
 ## [3.0.0] - 2026-09-02
 
