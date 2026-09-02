@@ -69,7 +69,17 @@ def build(config: BuildConfig, project_root: Path) -> None:
             runtime_bin,
             Path(staging_dir),
         )
-        cmd = [str(appimagetool_bin), "--runtime-file", str(staged_runtime)]
+        # mksquashfs preserves filesystem xattrs by default, so without this
+        # a build host's own security-context labels (e.g. SELinux) leak
+        # into the packaged image - and differ from a build host without
+        # them, breaking reproducibility across machines.
+        cmd = [
+            str(appimagetool_bin),
+            "--runtime-file",
+            str(staged_runtime),
+            "--mksquashfs-opt",
+            "-no-xattrs",
+        ]
         if resolved.update_info:
             cmd += ["-u", resolved.update_info]
         cmd += [str(appdir), output_name]
