@@ -1711,8 +1711,37 @@ def test_build_strips_xattrs_when_packaging(tmp_path: Path) -> None:
 
     packaging_call = next(c for c in manager.mock_calls if c[0] == "subprocess_run")
     cmd = packaging_call.args[0]
-    assert "--mksquashfs-opt" in cmd
-    assert cmd[cmd.index("--mksquashfs-opt") + 1] == "-no-xattrs"
+    mksquashfs_opts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--mksquashfs-opt"]
+    assert "-no-xattrs" in mksquashfs_opts
+
+
+def test_build_disables_duplicate_detection_when_packaging(tmp_path: Path) -> None:
+    build_module = importlib.import_module("appimage.ctl.build")
+    appdir_module = importlib.import_module("appimage.ctl.build_appdir")
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+    )
+    config = BuildConfig()
+
+    manager = MagicMock()
+    with patch.object(appdir_module, "_prepare_python", manager._prepare_python), \
+         patch.object(appdir_module, "_copy_assets", manager._copy_assets), \
+         patch.object(appdir_module, "_copy_extra_files", manager._copy_extra_files), \
+         patch.object(appdir_module, "_compile_pyc", manager._compile_pyc), \
+         patch.object(build_module, "_resolve_appimagetool", manager._resolve_appimagetool), \
+         patch.object(build_module, "_resolve_runtime_file", manager._resolve_runtime_file), \
+         patch.object(build_module, "_stage_runtime_file_for_appimagetool", manager._stage_runtime_file), \
+         patch.object(build_module.subprocess, "run", manager.subprocess_run):
+        manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
+        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
+        build(config, tmp_path)
+
+    packaging_call = next(c for c in manager.mock_calls if c[0] == "subprocess_run")
+    cmd = packaging_call.args[0]
+    mksquashfs_opts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--mksquashfs-opt"]
+    assert "-no-duplicates" in mksquashfs_opts
 
 
 def test_build_appdir_never_touches_appimagetool_or_packages(tmp_path: Path) -> None:

@@ -73,12 +73,25 @@ def build(config: BuildConfig, project_root: Path) -> None:
         # a build host's own security-context labels (e.g. SELinux) leak
         # into the packaged image - and differ from a build host without
         # them, breaking reproducibility across machines.
+        #
+        # mksquashfs's duplicate-file detection pre-filters candidates by
+        # comparing already-compressed block sizes before doing a full
+        # byte comparison - confirmed by hand that this makes the packaged
+        # image sensitive to incidental per-build state (observed even
+        # between two immediately-successive builds from a freshly
+        # reassembled, content-identical AppDir on the same machine, no
+        # network or other machine involved). Trades a larger AppImage
+        # (duplicate files are stored once each, not deduplicated) for
+        # actually holding the "identical input produces identical output"
+        # guarantee this project makes.
         cmd = [
             str(appimagetool_bin),
             "--runtime-file",
             str(staged_runtime),
             "--mksquashfs-opt",
             "-no-xattrs",
+            "--mksquashfs-opt",
+            "-no-duplicates",
         ]
         if resolved.update_info:
             cmd += ["-u", resolved.update_info]

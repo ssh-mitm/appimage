@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `update-tools` now actually moves an already-pinned `python_date` forward instead of re-resolving the same old date
 - AppDir file/directory permissions are now normalized (group/other write bits cleared) before packaging, alongside mtimes
 - Packaging now strips filesystem xattrs (`-no-xattrs`), so build-host security labels (e.g. SELinux) no longer leak into the AppImage
+- Packaging now disables mksquashfs duplicate-file detection (`-no-duplicates`), which could otherwise make the packaged image sensitive to incidental per-build state even from an unchanged AppDir
 
 ## [3.0.0] - 2026-09-02
 
