@@ -27,7 +27,7 @@ from appimage.ctl._appimagetool import _resolve_appimagetool, _resolve_runtime_f
 from appimage.ctl._base import _ResolvedBuild, _resolve
 from appimage.ctl._download import _sha256_file, _verify_sha256
 from appimage.ctl._python import _resolve_python_tarball, _resolve_python_url
-from appimage.ctl.build_appdir import _normalize_mtimes
+from appimage.ctl.build_appdir import _normalize_mtimes, _normalize_permissions
 from appimage.ctl.lock import _write_reproducible_flag
 
 
@@ -1283,6 +1283,44 @@ def test_normalize_mtimes_sets_fixed_epoch_recursively(tmp_path: Path) -> None:
     assert os.stat(appdir / "sub").st_mtime == 0
     assert os.stat(appdir / "sub" / "file.txt").st_mtime == 0
     assert os.stat(appdir / "top.txt").st_mtime == 0
+
+
+# ---------------------------------------------------------------------------
+# _normalize_permissions
+# ---------------------------------------------------------------------------
+
+def test_normalize_permissions_clears_group_and_other_write_bits(tmp_path: Path) -> None:
+    appdir = tmp_path / "AppDir"
+    (appdir / "sub").mkdir(parents=True)
+    script = appdir / "sub" / "script.sh"
+    script.write_text("#!/bin/sh\n")
+    plain = appdir / "plain.txt"
+    plain.write_text("hi")
+
+    script.chmod(0o775)
+    plain.chmod(0o664)
+    (appdir / "sub").chmod(0o775)
+    appdir.chmod(0o775)
+
+    _normalize_permissions(appdir)
+
+    import os
+
+    assert os.stat(script).st_mode & 0o777 == 0o755
+    assert os.stat(plain).st_mode & 0o777 == 0o644
+    assert os.stat(appdir / "sub").st_mode & 0o777 == 0o755
+    assert os.stat(appdir).st_mode & 0o777 == 0o755
+
+
+def test_normalize_permissions_skips_symlinks(tmp_path: Path) -> None:
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+    target = appdir / "target.txt"
+    target.write_text("hi")
+    link = appdir / "link.txt"
+    link.symlink_to("target.txt")
+
+    _normalize_permissions(appdir)  # must not raise on the symlink
 
 
 # ---------------------------------------------------------------------------

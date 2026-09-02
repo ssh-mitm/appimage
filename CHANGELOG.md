@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `update-tools` now actually moves an already-pinned `python_date` forward instead of re-resolving the same old date
+- AppDir file/directory permissions are now normalized (group/other write bits cleared) before packaging, alongside mtimes
 
 ## [3.0.0] - 2026-09-02
 

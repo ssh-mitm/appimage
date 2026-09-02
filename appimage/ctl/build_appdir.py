@@ -782,6 +782,32 @@ def _normalize_mtimes(appdir: Path, epoch: int) -> None:
     os.utime(appdir, (epoch, epoch), follow_symlinks=False)
 
 
+def _normalize_permissions(appdir: Path) -> None:
+    """Clear the group- and other-write bits on every file and directory in *appdir*.
+
+    ``mksquashfs`` embeds each inode's permission bits into the packed
+    image, and those bits can end up group-writable depending on how a
+    given build host's umask interacted with the permissions already
+    stored in an installed package's own files (e.g. a python-build-
+    standalone tarball's archived modes) - independent of the umask the
+    build was actually invoked under. Two AppDirs with byte-identical
+    file *content* have been observed to differ only in these bits
+    (``0775``/``0664`` on one machine, ``0755``/``0644`` on another),
+    which alone is enough to make the final ``.AppImage`` differ.
+    Clearing them (equivalent to enforcing umask ``022`` after the
+    fact) is safe: nothing in an AppDir should rely on group/other
+    write access to its own bundled files.
+    """
+    for root, dirs, files in os.walk(appdir):
+        for name in (*dirs, *files):
+            path = Path(root) / name
+            if path.is_symlink():
+                continue
+            mode = path.stat().st_mode
+            path.chmod(mode & ~0o022)
+    appdir.chmod(appdir.stat().st_mode & ~0o022)
+
+
 def _copy_assets(resolved: _ResolvedBuild, project_root: Path, appdir: Path) -> None:
     """Copy icon, desktop file, and AppRun script into AppDir."""
     _log.info("Copying assets...")
@@ -861,6 +887,7 @@ def _assemble_appdir(
     # environment (it touches a few paths of its own, e.g. .DirIcon, which
     # this AppDir-side normalization can't reach).
     _normalize_mtimes(appdir, epoch)
+    _normalize_permissions(appdir)
 
 
 def _resolve_for_appdir(
