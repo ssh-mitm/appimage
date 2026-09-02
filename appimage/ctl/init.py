@@ -59,6 +59,8 @@ def _pinned_download_fields(
     resolved: _ResolvedBuild,
     project_root: Path,
     existing: set[str],
+    *,
+    force_latest: bool = False,
 ) -> dict[str, object]:
     """Resolve toolchain pins and return their fields to add.
 
@@ -66,6 +68,16 @@ def _pinned_download_fields(
     appimagetool_version/appimagetool_sha256, runtime_sha256, and
     appimagectl_version. Only resolves what isn't already configured; may
     trigger downloads (except appimagectl_version, a local metadata read).
+
+    ``force_latest`` re-resolves ``python_date`` against "latest" even when
+    ``resolved.python_date`` already carries a pinned value - used by
+    ``update-tools`` to move the pin forward. Without it, a already-pinned
+    ``python_date`` would just be looked up again by its own tag and echoed
+    back unchanged, since ``resolved`` already reflects the currently
+    configured value rather than "unset". The other pins here (appimagetool,
+    runtime, appimage_version) don't need this: they're always resolved
+    fresh regardless of what's currently configured, since none of them are
+    threaded through as a lookup key the way ``python_date`` is.
     """
     new: dict[str, object] = {}
     arch = platform.machine()
@@ -75,7 +87,7 @@ def _pinned_download_fields(
     if "python_date" not in existing:
         _url, api_sha256, resolved_date = _resolve_python_url(
             resolved.python,
-            resolved.python_date,
+            "" if force_latest else resolved.python_date,
             arch,
         )
         new["python_date"] = resolved_date

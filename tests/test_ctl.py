@@ -15,7 +15,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from appimage.ctl import BuildConfig, build, build_appdir, enable_reproducible, write_config
+from appimage.ctl import (
+    BuildConfig,
+    build,
+    build_appdir,
+    enable_reproducible,
+    update_tools,
+    write_config,
+)
 from appimage.ctl._appimagetool import _resolve_appimagetool, _resolve_runtime_file
 from appimage.ctl._base import _ResolvedBuild, _resolve
 from appimage.ctl._download import _sha256_file, _verify_sha256
@@ -1812,6 +1819,48 @@ def test_write_config_pins_python_date_when_unset(tmp_path: Path) -> None:
     mock_resolve_python.assert_called_once()
     content = (tmp_path / "pyproject.toml").read_text()
     assert 'python_date = "20260101"' in content
+    assert "f" * 64 in content
+
+
+def test_update_tools_reresolves_python_date_against_latest(tmp_path: Path) -> None:
+    """update-tools must move an already-pinned python_date forward.
+
+    Regression test: ``_pinned_download_fields`` used to pass
+    ``resolved.python_date`` straight through to ``_resolve_python_url``,
+    so a project with ``python_date`` already set would just have that same
+    date looked up again (and echoed back unchanged) instead of resolving
+    "latest" - defeating the entire point of ``update-tools``. Asserting
+    the call is made with an empty date pins down the fix.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        "[tool.appimage]\n"
+        'app = "myapp"\nentry_point = "myapp"\npython = "3.11"\n'
+        'python_date = "20260101"\npython_sha256 = "deadbeef"\n'
+    )
+    from appimage.ctl import BuildConfig
+
+    config = BuildConfig.from_pyproject(tmp_path)
+
+    tool_path = tmp_path / "appimagetool"
+    runtime_path = tmp_path / "runtime-x86_64"
+
+    with patch(
+        "appimage.ctl.init._resolve_python_url",
+        return_value=("http://example/py.tar.gz", "f" * 64, "20260901"),
+    ) as mock_resolve_python, patch(
+        "appimage.ctl.init._resolve_appimagetool", return_value=tool_path
+    ), patch("appimage.ctl.init._resolve_runtime_file", return_value=runtime_path), patch(
+        "appimage.ctl.init._appimagetool_version_string", return_value="continuous build"
+    ), patch("appimage.ctl.init._sha256_file", return_value="c" * 64), patch(
+        "appimage.ctl.init._resolve_appimage_pin_sha256", return_value="d" * 64
+    ):
+        update_tools(config, tmp_path)
+
+    mock_resolve_python.assert_called_once()
+    assert mock_resolve_python.call_args.args[:2] == ("3.11", "")
+    content = (tmp_path / "pyproject.toml").read_text()
+    assert 'python_date = "20260901"' in content
     assert "f" * 64 in content
 
 
