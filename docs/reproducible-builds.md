@@ -390,7 +390,7 @@ runtime dependencies and once for the build backend (below), writing
 
 ```sh
 build/AppDir/python/bin/python3 -m pip lock \
-    appimage==2.0.1 ".[extras]" <packages...> \
+    appimage==3.0.0 ".[extras]" <packages...> \
     -o pylock.toml
 ```
 
@@ -401,7 +401,7 @@ your local Python could pin a different platform/ABI than what the
 AppImage actually bundles. `lock` also reads `extras`/`packages` from
 `[tool.appimage]` for you, so that list isn't maintained twice.
 
-`appimage==2.0.1` and any `packages` entries are real PyPI distributions
+`appimage==3.0.0` and any `packages` entries are real PyPI distributions
 and stay in the lock with their own hash like any other dependency - only
 the local project (`.`/`.[extras]`) has no stable hash to pin between
 source edits, so it's installed separately at build time (below) instead.

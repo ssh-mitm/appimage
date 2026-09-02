@@ -56,7 +56,7 @@ Build configuration:
   app:            myapp                               [[project] name]
   entry_point:    myapp                               [[project] scripts]
   python:         3.11                                [[project] requires-python]
-  packages:       appimage==2.0.1 .                    [default (.)]
+  packages:       appimage==3.0.0 .                    [default (.)]
   icon:           myapp.png                            [detected (myapp.png)]
   desktop:        (generated)                          [will be generated]
   build_dir:      build                                [default]
