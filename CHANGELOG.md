@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-02
+
 ### Added
 
 - Default appimagetool source switched to [`AppImage/appimagetool`](https://github.com/AppImage/appimagetool) for deterministic `mksquashfs` output
@@ -158,7 +160,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release on pypi.org
 
-[Unreleased]: https://github.com/ssh-mitm/appimage/compare/2.0.1...main
+[Unreleased]: https://github.com/ssh-mitm/appimage/compare/3.0.0...main
+[3.0.0]: https://github.com/ssh-mitm/appimage/compare/2.0.1...3.0.0
 [2.0.1]: https://github.com/ssh-mitm/appimage/compare/2.0.0...2.0.1
 [2.0.0]: https://github.com/ssh-mitm/appimage/compare/1.2.0...2.0.0
 [1.2.0]: https://github.com/ssh-mitm/appimage/compare/1.1.1...1.2.0
