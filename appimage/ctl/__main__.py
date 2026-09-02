@@ -193,10 +193,11 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
         help=(
             "Path to a hash-pinned pylock-format file constraining the "
             "packaged project's own [build-system].requires (overrides "
-            "pyproject.toml). Installed with 'pip install --require-hashes' "
-            "before the project itself is installed with "
-            "'--no-build-isolation', so its otherwise-fresh isolated build "
-            "environment is hash-verified too. Generate it with 'lock', "
+            "pyproject.toml). Converted to a constraints file and passed "
+            "as 'pip install --build-constraint' when installing the "
+            "project, so its isolated build environment is hash-verified "
+            "instead of resolved live, without leaving the build backend "
+            "bundled in the shipped AppImage. Generate it with 'lock', "
             "alongside pylock.toml."
         ),
     )
