@@ -303,6 +303,45 @@ the pins) as a shortcut that enforces all of the above at once: it implies
 since resolving any of those three fresh on every build is exactly what
 defeats cross-machine reproducibility in the first place.
 
+### Pin `appimage` itself, not just what it downloads
+
+Everything above pins what `appimage.ctl` *downloads* - it says nothing
+about `appimage.ctl` *itself*. If your build environment installs the
+`appimage` package with an unpinned or range requirement (`pip install
+appimage`, `appimage>=3.0.0`, a bare `appimage` dependency in a Hatch/tox
+environment, etc.), a newer release can get resolved silently - on CI,
+on a teammate's machine, or on the same machine after a cache is cleared
+- without ever touching `pyproject.toml`. Since packaging behavior itself
+lives in this package (e.g. which `mksquashfs` flags get passed), two
+builds that pin every artifact `appimage.ctl` touches can still diverge
+if they're not running the *same* `appimage.ctl`.
+
+This is exactly how a real cross-machine reproducibility investigation
+went off track: local and CI produced different bytes, and every
+downloaded artifact (Python, appimagetool, the runtime stub, all
+dependencies) checked out as byte-identical - because the divergence was
+never in what was downloaded. Local was running a newer, patched
+`appimage` than CI, resolved from an unpinned dependency, with different
+default packaging flags. No amount of pinning `python_date`,
+`appimagetool_sha256`, or `runtime_sha256` closes that gap, because none
+of them touch which `appimage.ctl` runs the build in the first place.
+
+Pin an exact version with a hash, the same way `pylock`/`build_pylock`
+hash-pin everything else:
+
+```toml
+[tool.hatch.envs.appimage]
+dependencies = [
+    "appimage @ https://files.pythonhosted.org/packages/.../appimage-3.0.1-py3-none-any.whl#sha256=...",
+]
+```
+
+pip verifies the hash fragment on a direct URL reference like this even
+outside `--require-hashes` mode. A plain exact pin (`appimage==3.0.1`)
+is better than a range, but still isn't hash-verified - if the release
+on PyPI can't change after publishing, either is fine; if you don't want
+to depend on that, use the hash form above.
+
 ### AppDir-only builds need fewer pins
 
 `build-appdir` assembles the AppDir - installing Python and packages,
