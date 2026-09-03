@@ -43,23 +43,26 @@ python -m appimage.ctl check
 
 # Writes the AppImage to dist/myapp-x86_64.AppImage
 python -m appimage.ctl build
-
-# Optionally: persist detected values to pyproject.toml to pin or adjust them
-python -m appimage.ctl init
 ```
 
 
 ## Reproducible builds
 
-Covers bytecode compilation, file timestamps, and the `appimagetool` binary itself - `appimage` defaults to the [maintained successor](https://github.com/AppImage/appimagetool) of the classic tool, whose bundled `mksquashfs` has a [documented non-deterministic compression bug](https://github.com/AppImage/AppImageKit/issues/929).
-
-To guarantee this across machines and over time too, with every dependency hash-verified, four steps: pin the toolchain, hash-pin every dependency, build once to prove the pins actually work together, then turn `reproducible = true` on - only once that build succeeds.
+To guarantee byte-identical builds across machines and over time too, not just here and now:
 
 ```sh
-python -m appimage.ctl enable-reproducible   # all four steps, automated
+# See what's pinned and what's missing
+python -m appimage.ctl check
+
+# Pin the toolchain, hash-pin every dependency, verify with a real build,
+# then turn reproducible = true on in pyproject.toml - only once that build succeeds
+python -m appimage.ctl enable-reproducible
+
+# Every later build already enforces it - no flag needed
+python -m appimage.ctl build
 ```
 
-Or run them yourself for more control - `init`, `lock`, `build --reproducible` - see [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for the piecewise form, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `lock`.
+See [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for the piecewise form and what each step does.
 
 
 ## Bundled interpreter access
