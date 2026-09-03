@@ -272,6 +272,14 @@ Matching hashes prove it for your project on your machine. To prove it
 *across* machines or over time, the appimagetool/runtime binaries and the
 bundled Python release also need to be pinned - see below.
 
+This isn't just a claim in this document - the exact same check runs on
+every push and pull request, via
+[`packaging/verify-appimage-reproducible-build.sh`](https://github.com/ssh-mitm/appimage/blob/main/packaging/verify-appimage-reproducible-build.sh):
+it builds [`examples/myapp`](https://github.com/ssh-mitm/appimage/tree/main/examples/myapp)
+twice, from scratch, and fails the build if the two `.AppImage` files
+aren't byte-identical. See the `reproducible-appimage-build` job in
+[`.github/workflows/python-package.yml`](https://github.com/ssh-mitm/appimage/blob/main/.github/workflows/python-package.yml).
+
 ## Pinning for cross-machine reproducibility
 
 Fixes 1, 2, and 4 above are fully automatic and need no configuration.
