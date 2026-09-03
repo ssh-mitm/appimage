@@ -100,7 +100,7 @@ and supply-chain verification, and each can be adopted alone.
 ## Why this is hard
 
 An AppImage is an ELF runtime with a SquashFS image appended. Getting a
-byte-identical result out of that pipeline turned out to need six
+byte-identical result out of that pipeline turned out to need seven
 independent fixes - any one missing was enough to make two builds differ,
 even with everything else already correct:
 
@@ -162,6 +162,16 @@ even with everything else already correct:
    the mechanism). A final sweep of the whole AppDir for the build path
    turns "did this actually work" into something the build verifies on
    every run rather than something checked by hand.
+7. **Rolling releases.** Both `AppImage/appimagetool` and `AppImage/type2-runtime` also
+   publish a `continuous` release - the asset is overwritten in place on every upstream
+   rebuild, same filename, same URL. A sha256 pinned against today's `continuous` asset
+   can become permanently unfetchable the moment upstream cuts the next one, since
+   GitHub doesn't keep the bytes it overwrote - the pin still looks valid in
+   `pyproject.toml`, but a fresh resolution (a cleared cache, a new CI runner, a new
+   contributor's machine) has nothing left to verify it against. `appimage.ctl` resolves
+   the newest *genuine, versioned* release instead - never `continuous` - which GitHub
+   never reuses for a later build: appimagetool publishes semver tags (`1.9.1`),
+   type2-runtime dated ones (`20251108`).
 
 See [internals.md](internals.md) for exactly where each of these fits in
 the build sequence, and [For LLMs and coding agents](llms.md) for the
@@ -214,9 +224,12 @@ Then rerun `init` (or just the build) to re-resolve and re-pin
 
 **Fix - offline/air-gapped:** download the right asset yourself from
 [the `AppImage/appimagetool` releases page](https://github.com/AppImage/appimagetool/releases)
-- the `continuous` release's `appimagetool-<arch>.AppImage` (`<arch>` is
-`x86_64`, `aarch64`, or `armhf`; the GitHub API's own published sha256 for
-that asset is what a networked build would auto-verify against). Then
+- the newest *versioned* release's `appimagetool-<arch>.AppImage` (`<arch>` is
+`x86_64`, `aarch64`, or `armhf`), **not** the `continuous` release: `continuous` is
+overwritten in place on every upstream rebuild, so a sha256 pinned against it today can
+become permanently unfetchable later - see
+[Why this is hard](#why-this-is-hard) above. The GitHub API's own published sha256 for
+the asset you download is what a networked build would auto-verify against. Then
 either:
 
 - place it at `<build_dir>/appimagetool-<arch>.AppImage` so it resolves as
@@ -373,7 +386,7 @@ full, effective command line `build()` runs - `appimage/ctl/build.py`,
 not paraphrased:
 
 ```sh
-appimagetool --runtime-file <staged copy of runtime_sha256's file> \
+appimagetool --runtime-file <staged copy of the file pinned by runtime_sha256> \
   --mksquashfs-opt -no-xattrs \
   --mksquashfs-opt -no-duplicates \
   [-u <update_info>] \

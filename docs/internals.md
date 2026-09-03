@@ -324,9 +324,18 @@ bundled `mksquashfs` has a documented non-deterministic multi-threaded compressi
 byte-identical output impossible no matter how the AppDir itself was normalized;
 `AppImage/appimagetool` bundles a fixed, modern squashfs-tools instead.
 
+Both `AppImage/appimagetool` and `AppImage/type2-runtime` also publish a rolling
+`continuous` release - the asset is replaced in place whenever a new build goes out,
+same filename, same URL. Don't download from it: a sha256 pinned against today's
+`continuous` asset can become permanently unfetchable the moment upstream cuts the next
+one, since GitHub doesn't keep the bytes it overwrote. `appimage.ctl` instead resolves
+the newest *genuine, versioned* release - appimagetool uses semver (`1.9.1`),
+type2-runtime a release date (`20251108`) - which is never reused for a later build.
+Reproducing that here means downloading from a specific version tag, not `continuous`:
+
 ```bash
 curl -L \
-  "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" \
+  "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${ARCH}.AppImage" \
   -o build/appimagetool
 chmod +x build/appimagetool
 ```
@@ -338,22 +347,23 @@ proxies, can't complete it) and lets you verify what you got:
 
 ```bash
 curl -L \
-  "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${ARCH}" \
+  "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-${ARCH}" \
   -o build/runtime
 chmod +x build/runtime
 ```
 
-Both are rolling `continuous` releases - the asset is replaced in place whenever a new
-build is published - but unlike AppImageKit's old `continuous` tag, GitHub *does*
-publish a sha256 digest per asset for both of these repos via its Releases API, so a
-fresh download can be verified against it at no extra cost. Downloading either one
-unpinned still means two builds run at different times, or on different machines, can
-end up packing with different binaries - the one piece of the pipeline `appimage.ctl`
-cannot make reproducible purely through AppDir normalization. Set `appimagetool_sha256`
-and `runtime_sha256` in `[tool.appimage]` (or run `init` to write both
-automatically from whatever's currently resolved) to pin and verify them; without a
-pin, `appimage.ctl` still logs the sha256 of whichever binaries it used, so they can
-be copied into config later.
+Check each project's releases page for the current version tag before using these -
+`1.9.1`/`20251108` above are what was current when this was written, not a moving
+target you can query the way `/releases/latest` works for python-build-standalone
+(`/releases/latest` returns whichever release was published most recently by date,
+which is usually `continuous` itself for both of these repos - it doesn't know to skip
+rolling releases the way `appimage.ctl`'s own resolution does). GitHub publishes a
+sha256 digest per asset for both repos via its Releases API, so a fresh download can be
+verified against it at no extra cost regardless of which tag it came from. Set
+`appimagetool_sha256` and `runtime_sha256` in `[tool.appimage]` (or run `init` to
+write both automatically from whatever's currently resolved) to pin and verify them;
+without a pin, `appimage.ctl` still logs the sha256 of whichever binaries it used, so
+they can be copied into config later.
 
 ### Step 9 - Scrub build-machine paths and normalize the AppDir
 

@@ -114,7 +114,8 @@ def _fetch_latest_versioned_release_asset_digest(
 
     """
     releases = _github_api_get(_GITHUB_RELEASES_API.format(repo=repo))
-    assert isinstance(releases, list)  # noqa: S101  # /releases always returns a list
+    # /releases always returns a list, never a single object.
+    assert isinstance(releases, list)  # noqa: S101  # nosec B101
     candidates = [
         r
         for r in releases
