@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-09-03
+
 ### Added
 
 - `check`/`lock`/`build` now warn when `pylock`/`build_pylock` pin a package with no prebuilt wheel
@@ -190,7 +192,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release on pypi.org
 
-[Unreleased]: https://github.com/ssh-mitm/appimage/compare/3.0.1...main
+[Unreleased]: https://github.com/ssh-mitm/appimage/compare/4.0.0...main
+[4.0.0]: https://github.com/ssh-mitm/appimage/compare/3.0.1...4.0.0
 [3.0.1]: https://github.com/ssh-mitm/appimage/compare/3.0.0...3.0.1
 [3.0.0]: https://github.com/ssh-mitm/appimage/compare/2.0.1...3.0.0
 [2.0.1]: https://github.com/ssh-mitm/appimage/compare/2.0.0...2.0.1
