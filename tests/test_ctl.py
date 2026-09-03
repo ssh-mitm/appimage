@@ -9,6 +9,7 @@ import importlib
 import json
 import platform
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -841,6 +842,7 @@ def test_reproducible_passes_when_pins_set(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
     config = BuildConfig(
         reproducible=True,
+        python="3.11",
         python_date="20260211",
         appimage_version="2.0.1",
         appimage_sha256=digest_of(b"appimage"),
@@ -861,6 +863,7 @@ def test_reproducible_python_dir_satisfies_appdir_pin(tmp_path: Path) -> None:
     _write_minimal_project(tmp_path)
     config = BuildConfig(
         reproducible=True,
+        python="3.11",
         python_dir="/opt/python",
         appimage_version="2.0.1",
         appimage_sha256=digest_of(b"appimage"),
@@ -872,6 +875,57 @@ def test_reproducible_python_dir_satisfies_appdir_pin(tmp_path: Path) -> None:
 
     assert resolved.appdir_errors == []
     assert resolved.package_errors == []
+
+
+def test_reproducible_requires_python_set_explicitly(tmp_path: Path) -> None:
+    """requires-python is a compatibility floor, not a build pin - not accepted here."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        'requires-python = ">=3.11"\n',
+    )
+    config = BuildConfig(
+        reproducible=True,
+        python_date="20260211",
+        appimage_version="2.0.1",
+        appimage_sha256=digest_of(b"appimage"),
+        appimagetool_sha256=digest_of(b"tool"),
+        runtime_sha256=digest_of(b"runtime"),
+    )
+
+    resolved = _resolve(config, tmp_path)
+
+    assert any(
+        "reproducible requires python to be set explicitly" in e
+        for e in resolved.appdir_errors
+    )
+
+
+def test_python_defaulting_warns_outside_reproducible(tmp_path: Path) -> None:
+    """Falls back to the running interpreter's version, warning that it did."""
+    _write_minimal_project(tmp_path)
+    config = BuildConfig()
+    running = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.python == running
+    assert any(
+        "python not set" in w and f"defaulting to {running}" in w
+        for w in resolved.appdir_warnings
+    )
+
+
+def test_python_from_requires_python_does_not_warn(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+        'requires-python = ">=3.12"\n',
+    )
+    config = BuildConfig()
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.python == "3.12"
+    assert not any("python not set" in w for w in resolved.appdir_warnings)
 
 
 def test_python_archive_and_python_dir_together_is_an_error(tmp_path: Path) -> None:
@@ -1856,7 +1910,8 @@ def test_build_appdir_ignores_missing_package_pins_under_reproducible(tmp_path: 
 
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
-        '[tool.appimage]\nreproducible = true\npython_date = "20260211"\n'
+        '[tool.appimage]\nreproducible = true\npython = "3.11"\n'
+        'python_date = "20260211"\n'
         'appimage_version = "2.0.1"\nappimage_sha256 = "' + "a" * 64 + '"\n'
     )
     config = BuildConfig.from_pyproject(tmp_path)
@@ -3046,7 +3101,7 @@ def test_lock_writes_both_lock_paths_to_pyproject_when_unset(tmp_path: Path) -> 
     from appimage.ctl.lock import lock
 
     _write_project_with_build_system(tmp_path)
-    config = BuildConfig()
+    config = BuildConfig(python="3.11")
 
     with patch("appimage.ctl._python._resolve_python_tarball", return_value=tmp_path / "python.tar.gz"), \
          patch("appimage.ctl._python.tarfile.open") as mock_tarfile, \
@@ -3073,7 +3128,7 @@ def test_lock_skips_write_when_already_set(tmp_path: Path) -> None:
         '[build-system]\nrequires = ["uv_build>=0.12.7,<0.13"]\n'
         'build-backend = "uv_build"\n'
         '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
-        '[tool.appimage]\npylock = "custom-lock.toml"\n'
+        '[tool.appimage]\npython = "3.11"\npylock = "custom-lock.toml"\n'
         'build_pylock = "custom-build-lock.toml"\n'
     )
     config = BuildConfig.from_pyproject(tmp_path)

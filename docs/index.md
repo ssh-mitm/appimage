@@ -30,7 +30,7 @@ Supported architectures: **x86_64**, **aarch64**, **armv7**.
 ## Install
 
 ```sh
-pip install appimage
+python -m pip install appimage
 ```
 
 ## Build
@@ -39,7 +39,7 @@ pip install appimage
 python -m appimage.ctl build
 ```
 
-`app`, `entry_point`, and `python` version are detected automatically from `[project]` in your existing `pyproject.toml` - no appimage-specific configuration required. The `.desktop` file and AppRun script are generated automatically. If no icon is found a built-in default icon is used - add `myapp.png` to your project root to use your own.
+`app`, `entry_point`, and `python` version are detected automatically from `[project]` in your existing `pyproject.toml` - no appimage-specific configuration required. No `pyproject.toml` yet? `uv init` creates a minimal one in seconds. The `.desktop` file and AppRun script are generated automatically. If no icon is found a built-in default icon is used - add `myapp.png` to your project root to use your own.
 
 The AppImage is written to `dist/myapp-x86_64.AppImage` (or the matching architecture name).
 

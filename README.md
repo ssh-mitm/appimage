@@ -26,16 +26,18 @@
 `appimage` bundles a complete Python distribution together with your application and all its dependencies into a single executable file.
 
 - **Same Python as uv**: the bundled interpreter comes from [python-build-standalone](https://github.com/astral-sh/python-build-standalone), the same builds `uv python install` uses - what you develop and test with locally is what ships in the AppImage
-- **Reproducible builds**: two independent builds of the same project produce a byte-for-byte identical `.AppImage`, no configuration needed ([details below](#reproducible-builds))
+- **Reproducible builds, opt-in**: pin the toolchain once and get byte-identical `.AppImage` output across machines and over time ([details below](#reproducible-builds))
 
 
-## Quick Start
+## Quick Start — just want an AppImage
 
 ```sh
-pip install appimage
+python -m pip install appimage
 ```
 
-A `pyproject.toml` is all that's needed to build. If your project already has one, `app`, `entry_point`, and `python` version are read from `[project]` automatically.
+**A `pyproject.toml` is all that's needed to build.** If your project already has one, `app`, `entry_point`, and `python` version are read from `[project]` automatically.
+
+> No `pyproject.toml` yet? [`uv init`](https://docs.astral.sh/uv/guides/projects/) creates a minimal one in seconds.
 
 ```sh
 # Check what will be detected before building
@@ -45,10 +47,14 @@ python -m appimage.ctl check
 python -m appimage.ctl build
 ```
 
+✅ **That's it - a working AppImage.** Shipping to production? See [Reproducible builds](#reproducible-builds) below for byte-identical output across machines and over time.
+
 
 ## Reproducible builds
 
-To guarantee byte-identical builds across machines and over time too, not just here and now:
+Two reasons this matters: **security** - anyone can independently rebuild from source and verify the result matches, instead of trusting the build server - and **production operation** - an unpinned toolchain silently changes what gets bundled as tools and dependencies release new versions, so the same build command can produce a different result next month even without a single code change.
+
+**To guarantee byte-identical builds across machines and over time:**
 
 ```sh
 # See what's pinned and what's missing
@@ -74,20 +80,27 @@ See [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible
 
 ## Bundled interpreter access
 
-The bundled Python is accessible at runtime without extracting the AppImage:
+Run the bundled Python directly, or switch to any other installed console script by name - handy for a REPL, a one-off script, or an app that bundles more than one command:
 
 ```sh
-./myapp-x86_64.AppImage --python-interpreter            # interactive REPL
-./myapp-x86_64.AppImage --python-interpreter script.py  # run a script
-./myapp-x86_64.AppImage --python-interpreter -m pip list
-./myapp-x86_64.AppImage --python-list-entry-points      # list all entry points
-./myapp-x86_64.AppImage --python-entry-point other:main # switch entry point
+./myapp-x86_64.AppImage --python-interpreter              # interactive REPL
+./myapp-x86_64.AppImage --python-interpreter script.py    # run a script
+./myapp-x86_64.AppImage --python-list-entry-points        # list all entry points
+./myapp-x86_64.AppImage --python-entry-point other:main   # switch entry point
+```
+
+**Example: want to start a Django application from an AppImage?** A Django project needs a WSGI server to actually serve traffic (`gunicorn`) and separate management commands (`django-admin migrate`, `createsuperuser`, ...) - all running the exact same code and dependencies:
+
+```sh
+./mysite-x86_64.AppImage --python-entry-point gunicorn mysite.wsgi:application
+./mysite-x86_64.AppImage --python-entry-point django-admin migrate
+./mysite-x86_64.AppImage --python-entry-point django-admin createsuperuser
 ```
 
 
 ## Virtual environments
 
-The AppImage can act as the Python interpreter for a virtual environment. Packages installed into the venv extend the bundled ones, without repackaging the AppImage:
+Install a plugin without rebuilding the AppImage. [SSH-MITM](https://github.com/ssh-mitm/ssh-mitm), for example, discovers plugins as installed entry points - a venv built on the AppImage's own interpreter lets `pip install` add one, picked up automatically.
 
 ```sh
 ./myapp-x86_64.AppImage --python-interpreter -m venv ~/.venv/myapp

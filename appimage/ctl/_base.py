@@ -12,6 +12,7 @@ import importlib.metadata
 import logging
 import platform
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -423,13 +424,15 @@ def _python_from_requires(requires: str) -> str:
     Returns
     -------
     str
-        Minor version string such as ``"3.11"``.
+        Minor version string such as ``"3.11"``. Falls back to the running
+        interpreter's own version if *requires* has no parseable ``X.Y``
+        (same fallback ``_resolve_python`` uses when nothing is set at all).
 
     """
     match = re.search(r"(\d+)\.(\d+)", requires)
     if match:
         return f"{match.group(1)}.{match.group(2)}"
-    return "3.11"
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
 def _find_icon(app: str, project_root: Path) -> Path | None:
@@ -600,12 +603,13 @@ def _resolve_python(
     config: BuildConfig,
     project: dict[str, object],
 ) -> tuple[str, str]:
-    """Resolve Python version from config or requires-python."""
+    """Resolve Python version from config, requires-python, or the running interpreter."""
     if config.python is not None:
         return config.python, "[tool.appimage]"
     if requires := project.get("requires-python"):
         return _python_from_requires(str(requires)), "[project] requires-python"
-    return "3.11", "default"
+    running = f"{sys.version_info.major}.{sys.version_info.minor}"
+    return running, "default (running interpreter)"
 
 
 def _resolve_icon_path(
@@ -697,6 +701,42 @@ def _append_sdist_only_warning(
     )
 
 
+def _check_reproducible_pins(config: BuildConfig) -> tuple[list[str], list[str]]:
+    """Return the appdir/package errors for missing pins under ``reproducible``.
+
+    Split out of ``_resolve`` to keep its own branch count down - this is
+    the full set of pins ``reproducible`` requires to be set explicitly,
+    checked against the raw config fields (never the resolved/defaulted
+    values, which always have *something* even when nothing was pinned).
+    """
+    appdir_errors: list[str] = []
+    if not config.python:
+        appdir_errors.append(
+            "reproducible requires python to be set explicitly in "
+            "[tool.appimage] - run 'init' to resolve and write it. "
+            "requires-python is a compatibility floor, not a build pin, "
+            "so it isn't accepted as a substitute here.",
+        )
+    if not config.python_dir and not config.python_date:
+        appdir_errors.append(
+            "reproducible requires python_date (or python_dir) to be set "
+            "in [tool.appimage] - run 'init' to resolve and write it.",
+        )
+    appdir_errors.extend(
+        f"reproducible requires {key} to be set in "
+        "[tool.appimage] - run 'init' to resolve and write it."
+        for key in ("appimage_version", "appimage_sha256")
+        if not getattr(config, key)
+    )
+    package_errors = [
+        f"reproducible requires {key} to be set in "
+        "[tool.appimage] - run 'init' to resolve and write it."
+        for key in ("appimagetool_sha256", "runtime_sha256")
+        if not getattr(config, key)
+    ]
+    return appdir_errors, package_errors
+
+
 def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     """Resolve all auto-detected fields into a complete build configuration.
 
@@ -739,6 +779,15 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     )
     appdir_errors.extend(ep_errors)
     python, sources["python"] = _resolve_python(config, project)
+    if sources["python"] == "default (running interpreter)":
+        appdir_warnings.append(
+            f"python not set in [tool.appimage] and no requires-python in "
+            f"[project] - defaulting to {python}, the interpreter currently "
+            f"running appimage.ctl. That can differ between machines/CI "
+            f"images, silently changing which interpreter gets bundled. Set "
+            f"python explicitly in [tool.appimage] or requires-python in "
+            f"[project], or run 'init' to write the resolved value.",
+        )
     icon, sources["icon"], icon_warnings = _resolve_icon_path(config, project_root, app)
     appdir_warnings.extend(icon_warnings)
     desktop, sources["desktop"], desktop_warnings = _resolve_desktop_path(
@@ -797,23 +846,9 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
             )
 
     if config.reproducible:
-        if not config.python_dir and not config.python_date:
-            appdir_errors.append(
-                "reproducible requires python_date (or python_dir) to be set "
-                "in [tool.appimage] - run 'init' to resolve and write it.",
-            )
-        appdir_errors.extend(
-            f"reproducible requires {key} to be set in "
-            "[tool.appimage] - run 'init' to resolve and write it."
-            for key in ("appimage_version", "appimage_sha256")
-            if not getattr(config, key)
-        )
-        package_errors.extend(
-            f"reproducible requires {key} to be set in "
-            "[tool.appimage] - run 'init' to resolve and write it."
-            for key in ("appimagetool_sha256", "runtime_sha256")
-            if not getattr(config, key)
-        )
+        new_appdir_errors, new_package_errors = _check_reproducible_pins(config)
+        appdir_errors.extend(new_appdir_errors)
+        package_errors.extend(new_package_errors)
 
     if not config.pylock:
         pylock_msg = (

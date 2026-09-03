@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `check`/`lock`/`build` now warn when `pylock`/`build_pylock` pin a package with no prebuilt wheel
 - CI now verifies two independent AppImage builds are byte-identical on every push/PR
+- `check`/`build` now warn when `python` isn't set and no `requires-python` is in `[project]`, naming the version it defaulted to
 
 ### Changed
 
 - **Breaking:** `build` is now a required subcommand, consistent with `check`/`init`/`lock`/etc.; the bare `python -m appimage.ctl` (no subcommand) no longer builds and now exits with an error asking for one
 - **Breaking:** removed the `appimagectl` console script - `python -m appimage.ctl` always runs the interpreter you meant, `appimagectl` risked silently resolving to whichever install happened to be first on `PATH`
+- **Breaking:** `reproducible = true` now requires `python` to be set explicitly in `[tool.appimage]` - `requires-python` no longer satisfies it
+- **Breaking:** the `python` default (when neither `python` nor `requires-python` is set) is now the interpreter running `appimage.ctl`, not a hardcoded `3.11`
 
 ### Fixed
 
