@@ -62,6 +62,13 @@ python -m appimage.ctl enable-reproducible
 python -m appimage.ctl build
 ```
 
+**Important:** these pins go stale - re-run periodically to pick up newer releases:
+
+```sh
+python -m appimage.ctl lock           # refresh dependency pins
+python -m appimage.ctl update-tools   # refresh toolchain pins
+```
+
 See [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for the piecewise form and what each step does.
 
 
