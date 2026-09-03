@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `check`/`lock`/`build` now warn when `pylock`/`build_pylock` pin a package with no prebuilt wheel
+- CI now verifies two independent AppImage builds are byte-identical on every push/PR
+
 ### Fixed
 
 - Cached Python tarball is now keyed by `python`/`python_date`, so changing either no longer silently reuses a stale, mismatched cache
 - Installed Python is now verified to actually match the configured `python` version, failing immediately instead of confusingly later
 - Subprocesses (`pip`, `compileall`, `appimagetool`) now run with a pinned `PYTHONHASHSEED`/locale; `reproducible = true` also pins them for appimagectl's own process
+- Packaging now pins mksquashfs to a single compression thread, removing a source of non-deterministic output
+- Subprocesses and appimagectl's own process now also pin `TZ=UTC`
 
 ## [3.0.1] - 2026-09-02
 
