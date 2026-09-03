@@ -19,7 +19,7 @@ trap 'rm -rf "$OUT_A" "$OUT_B" "$EXAMPLE_DIR/build" "$EXAMPLE_DIR/dist"' EXIT
 for OUT in "$OUT_A" "$OUT_B"; do
     echo "==> building into $OUT"
     rm -rf "$EXAMPLE_DIR/build" "$EXAMPLE_DIR/dist"
-    (cd "$EXAMPLE_DIR" && python3 -m appimage.ctl)
+    (cd "$EXAMPLE_DIR" && python3 -m appimage.ctl build)
     cp "$EXAMPLE_DIR"/dist/*.AppImage "$OUT/"
 done
 

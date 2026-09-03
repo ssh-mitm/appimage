@@ -31,7 +31,7 @@ the minimal example project in `examples/myapp/` with your working copy of
 `appimage.ctl`, rather than a published release:
 
 ```bash
-hatch run appimagectl --project-dir examples/myapp
+hatch run appimagectl build --project-dir examples/myapp
 ./examples/myapp/dist/myapp-x86_64.AppImage
 ```
 
@@ -47,10 +47,10 @@ build-path scrubbing that keeps output independent of where the checkout
 lives), build twice and diff:
 
 ```bash
-hatch run appimagectl --project-dir examples/myapp
+hatch run appimagectl build --project-dir examples/myapp
 mv examples/myapp/dist/myapp-x86_64.AppImage /tmp/build-a.AppImage
 rm -rf examples/myapp/build examples/myapp/dist
-hatch run appimagectl --project-dir examples/myapp
+hatch run appimagectl build --project-dir examples/myapp
 sha256sum /tmp/build-a.AppImage examples/myapp/dist/myapp-x86_64.AppImage
 ```
 

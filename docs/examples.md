@@ -46,7 +46,7 @@ No `[tool.appimage]` section is needed - `app`, `entry_point`, and `python` are 
 
 ```sh
 cd examples/myapp
-python -m appimage.ctl
+python -m appimage.ctl build
 ```
 
 The AppImage is written to `examples/myapp/dist/myapp-x86_64.AppImage`.
@@ -56,7 +56,7 @@ The AppImage is written to `examples/myapp/dist/myapp-x86_64.AppImage`.
 When building in a network-restricted environment or sharing a cache across builds, point the tool to local copies of appimagetool, the runtime file, and the Python distribution - all three, since appimagetool alone still tries to fetch the runtime file live over the network unless one is supplied:
 
 ```sh
-python -m appimage.ctl \
+python -m appimage.ctl build \
   --appimagetool /opt/appimagetool-x86_64.AppImage \
   --appimagetool-sha256 3f9a1c...  \
   --runtime-file /opt/runtime-x86_64 \

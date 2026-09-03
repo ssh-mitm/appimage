@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `check`/`lock`/`build` now warn when `pylock`/`build_pylock` pin a package with no prebuilt wheel
 - CI now verifies two independent AppImage builds are byte-identical on every push/PR
 
+### Changed
+
+- **Breaking:** `build` is now a required subcommand, consistent with `check`/`init`/`lock`/etc.; the bare `python -m appimage.ctl` (no subcommand) no longer builds and now exits with an error asking for one
+
 ### Fixed
 
 - Cached Python tarball is now keyed by `python`/`python_date`, so changing either no longer silently reuses a stale, mismatched cache

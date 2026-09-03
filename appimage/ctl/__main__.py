@@ -264,7 +264,12 @@ def _parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(
         dest="command",
         metavar="COMMAND",
-        help="Defaults to building the AppImage when omitted.",
+        required=True,
+    )
+    subparsers.add_parser(
+        "build",
+        parents=[common],
+        help="Build the AppImage.",
     )
     subparsers.add_parser(
         "check",
@@ -421,7 +426,9 @@ def main() -> None:
         _apply_cli_overrides(config, args)
         _ensure_reproducible_process_env(config)
 
-        if args.command == "check":
+        if args.command == "build":
+            build(config, project_root)
+        elif args.command == "check":
             ok = check(config, project_root)
             sys.exit(0 if ok else 1)
         elif args.command == "init":
@@ -438,8 +445,6 @@ def main() -> None:
             build_appdir(config, project_root)
         elif args.command == "update-tools":
             update_tools(config, project_root)
-        else:
-            build(config, project_root)
     except (
         FileNotFoundError,
         RuntimeError,

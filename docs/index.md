@@ -36,7 +36,7 @@ pip install appimage
 ## Build
 
 ```sh
-python -m appimage.ctl
+python -m appimage.ctl build
 ```
 
 `app`, `entry_point`, and `python` version are detected automatically from `[project]` in your existing `pyproject.toml` - no appimage-specific configuration required. The `.desktop` file and AppRun script are generated automatically. If no icon is found a built-in default icon is used - add `myapp.png` to your project root to use your own.

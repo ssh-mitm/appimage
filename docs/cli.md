@@ -1,8 +1,8 @@
 # CLI Reference
 
 ```sh
-python -m appimage.ctl [COMMAND] [OPTIONS]
-appimagectl [COMMAND] [OPTIONS]
+python -m appimage.ctl COMMAND [OPTIONS]
+appimagectl COMMAND [OPTIONS]
 ```
 
 `python -m appimage.ctl` is the recommended form - same reasoning as
@@ -10,16 +10,14 @@ appimagectl [COMMAND] [OPTIONS]
 not whatever `appimagectl` happens to be first on `PATH`. The console
 script is installed alongside it and behaves identically.
 
-`COMMAND` defaults to building the AppImage when omitted - `appimagectl`
-on its own, with no configuration required, already builds. The other
-commands (`check`, `init`, `lock`, `enable-reproducible`) are each a
-distinct, mutually exclusive action.
+`COMMAND` is required - `check`, `build`, `init`, `lock`, `enable-reproducible`,
+`build-appdir`, and `update-tools` are each a distinct, mutually exclusive action.
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| *(none)* | Build the AppImage. |
+| `build` | Build the AppImage. |
 | `check` | Show detected build configuration and exit without building. |
 | `init` | Write auto-detected values to `[tool.appimage]` in `pyproject.toml` (only missing keys) and exit. Resolves the latest python-build-standalone release to write `python_date`/`python_sha256` (a lightweight API call, no download), and resolves appimagetool and the runtime file (possibly downloading them, ~8 MB + ~1 MB) to write `appimagetool_version`/`appimagetool_sha256`/`runtime_sha256`, whichever of these aren't already set. |
 | `lock` | Generate hash-pinned lock files and exit - a thin wrapper around `pip lock`, run through the bundled interpreter (see [Verified dependencies](reproducible-builds.md#verified-dependencies)). Generates `pylock.toml` for third-party dependencies *and* a build-backend lock file for the packaged project's own `[build-system].requires` in the same run, writing `pylock`/`build_pylock` to `pyproject.toml` for whichever isn't already set. |
@@ -63,38 +61,38 @@ one applies):
 
 ```sh
 # Build with a specific Python version
-python -m appimage.ctl --python 3.13
+python -m appimage.ctl build --python 3.13
 
 # Reproducible build pinned to a specific release date
-python -m appimage.ctl --python-date 20260211
+python -m appimage.ctl build --python-date 20260211
 
 # Override app name and entry point
-python -m appimage.ctl --app myapp --entry-point myapp.cli:main
+python -m appimage.ctl build --app myapp --entry-point myapp.cli:main
 
 # Install extras and additional packages
-python -m appimage.ctl --extras production --package extra-lib
+python -m appimage.ctl build --extras production --package extra-lib
 
 # Build from a different project directory
-python -m appimage.ctl --project-dir /path/to/project
+python -m appimage.ctl build --project-dir /path/to/project
 
 # Use a locally installed appimagetool instead of downloading
-python -m appimage.ctl --appimagetool /opt/appimagetool-x86_64.AppImage
+python -m appimage.ctl build --appimagetool /opt/appimagetool-x86_64.AppImage
 
 # Use a previously downloaded Python archive (e.g. from another build)
-python -m appimage.ctl --python-archive /shared/cache/python.tar.gz
+python -m appimage.ctl build --python-archive /shared/cache/python.tar.gz
 
 # Fully offline build using local copies of appimagetool, the runtime, and Python
-python -m appimage.ctl \
+python -m appimage.ctl build \
   --appimagetool /opt/appimagetool-x86_64.AppImage \
   --runtime-file /opt/runtime-x86_64 \
   --python-archive /shared/cache/python-3.11-x86_64.tar.gz
 
 # Pin and verify the toolchain automatically, then build reproducibly
 python -m appimage.ctl init   # writes python_date/python_sha256/appimagetool_version/appimagetool_sha256/runtime_sha256
-python -m appimage.ctl
+python -m appimage.ctl build
 
 # Fail loudly instead of warning if anything ends up unverified
-python -m appimage.ctl --verify-downloads
+python -m appimage.ctl build --verify-downloads
 
 # One command: pin the toolchain, hash-pin every dependency, verify with a
 # real build, and turn reproducible = true on once that build succeeds
@@ -103,11 +101,11 @@ python -m appimage.ctl enable-reproducible
 # Piecewise equivalent, plus a one-off enforced build afterwards
 python -m appimage.ctl init
 python -m appimage.ctl lock
-python -m appimage.ctl --reproducible
+python -m appimage.ctl build --reproducible
 
 # Generate hash-pinned lock files (pylock.toml + build_pylock), then build against them
 python -m appimage.ctl lock
-python -m appimage.ctl --require-pylock --require-build-pylock
+python -m appimage.ctl build --require-pylock --require-build-pylock
 
 # Regenerate both locks with a 7-day cooldown, excluding just-published releases
 python -m appimage.ctl lock --uploaded-prior-to P7D

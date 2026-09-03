@@ -164,7 +164,7 @@ mocked unit test suite passed the whole time. When changing anything in
 `_appimagetool.py`, `build_appdir.py`, or `build.py`, prefer verifying
 against a real build of `examples/myapp/` over trusting mocks alone; see
 [Development](develop/index.md) for the exact commands
-(`hatch run appimagectl --project-dir examples/myapp`, then the
+(`hatch run appimagectl build --project-dir examples/myapp`, then the
 build-twice-and-diff pattern for anything touching output determinism).
 Directory-shape variations are a specific, previously-bug-prone axis worth
 checking deliberately: a build path containing a space or a non-ASCII

@@ -42,7 +42,7 @@ A `pyproject.toml` is all that's needed to build. If your project already has on
 python -m appimage.ctl check
 
 # Writes the AppImage to dist/myapp-x86_64.AppImage
-python -m appimage.ctl
+python -m appimage.ctl build
 
 # Optionally: persist detected values to pyproject.toml to pin or adjust them
 python -m appimage.ctl init
