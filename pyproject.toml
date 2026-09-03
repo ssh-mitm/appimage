@@ -38,9 +38,6 @@ docs = [
     "sphinx-rtd-theme",
 ]
 
-[project.scripts]
-appimagectl = "appimage.ctl.__main__:main"
-
 [project.urls]
 Homepage = "https://github.com/ssh-mitm/appimage"
 Documentation = "https://appimage.readthedocs.io"

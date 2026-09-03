@@ -31,15 +31,14 @@ the minimal example project in `examples/myapp/` with your working copy of
 `appimage.ctl`, rather than a published release:
 
 ```bash
-hatch run appimagectl build --project-dir examples/myapp
+hatch run python -m appimage.ctl build --project-dir examples/myapp
 ./examples/myapp/dist/myapp-x86_64.AppImage
 ```
 
-`hatch run appimagectl` runs the `appimagectl` console script from
-inside the `lint`/`test` env, which has your checkout installed - so it
-picks up local changes to `appimage/ctl/` immediately, no reinstall step
-needed. If you only need to see what would be built without actually
-packaging anything, use `check` instead.
+`hatch run` runs it inside the `lint`/`test` env, which has your checkout
+installed - so it picks up local changes to `appimage/ctl/` immediately,
+no reinstall step needed. If you only need to see what would be built
+without actually packaging anything, use `check` instead.
 
 For a change that touches build output determinism specifically (bytecode
 handling, mtime normalization, appimagetool/runtime resolution, or the
@@ -47,10 +46,10 @@ build-path scrubbing that keeps output independent of where the checkout
 lives), build twice and diff:
 
 ```bash
-hatch run appimagectl build --project-dir examples/myapp
+hatch run python -m appimage.ctl build --project-dir examples/myapp
 mv examples/myapp/dist/myapp-x86_64.AppImage /tmp/build-a.AppImage
 rm -rf examples/myapp/build examples/myapp/dist
-hatch run appimagectl build --project-dir examples/myapp
+hatch run python -m appimage.ctl build --project-dir examples/myapp
 sha256sum /tmp/build-a.AppImage examples/myapp/dist/myapp-x86_64.AppImage
 ```
 

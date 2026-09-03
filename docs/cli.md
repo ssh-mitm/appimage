@@ -2,13 +2,12 @@
 
 ```sh
 python -m appimage.ctl COMMAND [OPTIONS]
-appimagectl COMMAND [OPTIONS]
 ```
 
-`python -m appimage.ctl` is the recommended form - same reasoning as
-`python -m pip` over a bare `pip`: it's always the interpreter you meant,
-not whatever `appimagectl` happens to be first on `PATH`. The console
-script is installed alongside it and behaves identically.
+Always the interpreter you meant - same reasoning as `python -m pip`
+over a bare `pip`. There's no separate `appimagectl` console script:
+that would resolve to whichever install happens to be first on `PATH`,
+not necessarily the one you're actually working in.
 
 `COMMAND` is required - `check`, `build`, `init`, `lock`, `enable-reproducible`,
 `build-appdir`, and `update-tools` are each a distinct, mutually exclusive action.

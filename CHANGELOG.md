@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking:** `build` is now a required subcommand, consistent with `check`/`init`/`lock`/etc.; the bare `python -m appimage.ctl` (no subcommand) no longer builds and now exits with an error asking for one
+- **Breaking:** removed the `appimagectl` console script - `python -m appimage.ctl` always runs the interpreter you meant, `appimagectl` risked silently resolving to whichever install happened to be first on `PATH`
 
 ### Fixed
 

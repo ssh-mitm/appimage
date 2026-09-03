@@ -43,8 +43,6 @@ python -m appimage.ctl build
 
 The AppImage is written to `dist/myapp-x86_64.AppImage` (or the matching architecture name).
 
-> **Tip:** `appimagectl` is also available as a standalone command after installation - `python -m appimage.ctl` and `appimagectl` behave identically.
-
 ## Check what was detected
 
 ```sh

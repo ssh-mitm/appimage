@@ -1,5 +1,5 @@
 # Copyright 2023-2026 SSH-MITM Dev-Team. All rights reserved.
-"""Entry point for ``python -m appimage.ctl`` (also installed as ``appimagectl``)."""
+"""Entry point for ``python -m appimage.ctl``."""
 
 import argparse
 import logging
