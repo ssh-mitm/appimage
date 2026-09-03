@@ -114,7 +114,7 @@ def _fetch_latest_versioned_release_asset_digest(
 
     """
     releases = _github_api_get(_GITHUB_RELEASES_API.format(repo=repo))
-    assert isinstance(releases, list)  # noqa: S101  # the releases list endpoint always returns a list
+    assert isinstance(releases, list)  # noqa: S101  # /releases always returns a list
     candidates = [
         r
         for r in releases
