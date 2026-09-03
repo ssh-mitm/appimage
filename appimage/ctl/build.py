@@ -62,7 +62,7 @@ def build(config: BuildConfig, project_root: Path) -> None:
     _assemble_appdir(resolved, appdir, python_cache, arch, project_root, epoch)
 
     appimagetool_bin = _resolve_appimagetool(resolved, appimagetool_cache, arch)
-    runtime_bin = _resolve_runtime_file(resolved, runtime_cache, arch)
+    runtime_bin, _runtime_tag = _resolve_runtime_file(resolved, runtime_cache, arch)
 
     dist_dir.mkdir(parents=True, exist_ok=True)
     output_name = f"{resolved.app}-{arch}.AppImage"

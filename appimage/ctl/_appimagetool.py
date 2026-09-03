@@ -9,13 +9,25 @@ from typing import Final
 from appimage.ctl._base import _ResolvedBuild
 from appimage.ctl._download import (
     _download,
-    _fetch_release_asset_digest,
+    _fetch_latest_versioned_release_asset_digest,
     _require_or_warn_unverified,
     _resolution_source,
     _verify_sha256,
 )
 
 _log: Final = logging.getLogger(__name__)
+
+# Both repos also publish a "continuous" release, reused and overwritten on
+# every rebuild - fine for someone always building from scratch, but a hash
+# pinned against it can become permanently unfetchable once upstream cuts a
+# new one (GitHub doesn't keep the overwritten bytes). These patterns match
+# only their genuine, immutable, versioned releases instead - confirmed by
+# hand against the real tag lists: appimagetool uses semver ("1.9.1"),
+# type2-runtime uses a release date ("20251108"). Neither matches
+# "continuous", "old", or "previous" (other non-versioned tags seen on
+# type2-runtime).
+_APPIMAGETOOL_VERSION_TAG_PATTERN: Final = r"\d+\.\d+\.\d+"
+_RUNTIME_VERSION_TAG_PATTERN: Final = r"\d{8}"
 
 # appimagetool/type2-runtime use different architecture tags than
 # python-build-standalone for the same physical hardware (e.g. "armhf"
@@ -226,9 +238,9 @@ def _locate_appimagetool(
 
     appimagetool_arch = _APPIMAGETOOL_ARCH_MAP.get(arch, arch)
     asset_name = _APPIMAGETOOL_ASSET.format(arch=appimagetool_arch)
-    url, api_sha256 = _fetch_release_asset_digest(
+    url, api_sha256, _tag = _fetch_latest_versioned_release_asset_digest(
         _APPIMAGETOOL_REPO,
-        "continuous",
+        _APPIMAGETOOL_VERSION_TAG_PATTERN,
         asset_name,
     )
     _download(url, appimagetool_cache)
@@ -296,7 +308,7 @@ def _resolve_runtime_file(
     resolved: _ResolvedBuild,
     runtime_cache: Path,
     arch: str,
-) -> Path:
+) -> tuple[Path, str | None]:
     """Return the path to the AppImage runtime ELF stub, downloading if necessary.
 
     Newer appimagetool releases fetch this at packaging time via their own
@@ -307,10 +319,22 @@ def _resolve_runtime_file(
     ``_resolve_appimagetool``, closes both gaps and lets it be passed via
     appimagetool's own ``--runtime-file`` flag to skip its live download
     entirely.
+
+    Returns
+    -------
+    tuple[Path, str | None]
+        The runtime file's path, and the release tag it was just resolved
+        from - only when freshly downloaded (``None`` for a config path or
+        an already-cached file, since there's no tag to report then).
+        ``init`` uses the tag as ``runtime_version``, a human-readable label
+        alongside ``runtime_sha256`` - the runtime stub has no ``--version``
+        of its own the way appimagetool does.
+
     """
     runtime: Path
     downloaded = False
     api_sha256: str | None = None
+    tag: str | None = None
 
     source = _resolution_source(resolved.runtime_file, runtime_cache)
 
@@ -326,9 +350,9 @@ def _resolve_runtime_file(
     else:
         runtime_arch = _APPIMAGETOOL_ARCH_MAP.get(arch, arch)
         asset_name = _RUNTIME_ASSET.format(arch=runtime_arch)
-        url, api_sha256 = _fetch_release_asset_digest(
+        url, api_sha256, tag = _fetch_latest_versioned_release_asset_digest(
             _RUNTIME_REPO,
-            "continuous",
+            _RUNTIME_VERSION_TAG_PATTERN,
             asset_name,
         )
         _download(url, runtime_cache)
@@ -357,4 +381,4 @@ def _resolve_runtime_file(
                 runtime.unlink(missing_ok=True)
             raise
 
-    return runtime
+    return runtime, tag

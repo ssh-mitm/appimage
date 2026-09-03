@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `verify-appimage-reproducible-build.sh` now builds the bundled `appimage` runtime module from the local checkout instead of resolving it from PyPI, so it tests the current code instead of failing on unreleased versions
+- **Breaking:** appimagetool and the runtime file are now resolved from their newest genuine, immutable, versioned GitHub release instead of the `continuous` tag - `continuous` is overwritten in place on every upstream rebuild, so a hash pinned against it could become permanently unfetchable; `appimagetool_sha256`/`runtime_sha256` pinned before this fix will need `update-tools` re-run
+- Added `runtime_version`, an informational label alongside `runtime_sha256` recording the resolved release tag (the runtime stub has no `--version` of its own the way appimagetool does) - written automatically by `init`
 
 ## [4.0.0] - 2026-09-03
 

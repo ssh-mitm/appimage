@@ -4,15 +4,14 @@
 import hashlib
 import json
 import logging
+import re
 import urllib.request
 from pathlib import Path
 from typing import Final
 
 _log: Final = logging.getLogger(__name__)
 
-_GITHUB_RELEASE_TAG_API: Final = (
-    "https://api.github.com/repos/{repo}/releases/tags/{tag}"
-)
+_GITHUB_RELEASES_API: Final = "https://api.github.com/repos/{repo}/releases"
 
 
 def _download(url: str, dest: Path) -> None:
@@ -31,12 +30,14 @@ def _download(url: str, dest: Path) -> None:
         dest.write_bytes(resp.read())
 
 
-def _github_api_get(url: str) -> dict[str, object]:
+def _github_api_get(url: str) -> dict[str, object] | list[dict[str, object]]:
     """Fetch and JSON-decode a GitHub REST API response.
 
     Shared by every GitHub API caller in ``appimage.ctl`` (release-by-tag
     lookups here, and the python-build-standalone release lookup in
     ``_python``) so the request headers only need to be right in one place.
+    A single-release endpoint returns a JSON object; a list endpoint (e.g.
+    ``/releases``) returns a JSON array - callers know which they asked for.
     """
     req = urllib.request.Request(  # noqa: S310
         url,
@@ -46,7 +47,7 @@ def _github_api_get(url: str) -> dict[str, object]:
         },
     )
     with urllib.request.urlopen(req) as resp:  # noqa: S310  # nosec B310
-        data: dict[str, object] = json.loads(resp.read())
+        data: dict[str, object] | list[dict[str, object]] = json.loads(resp.read())
     return data
 
 
@@ -60,44 +61,77 @@ def _asset_sha256(asset: dict[str, object]) -> str | None:
     )
 
 
-def _fetch_release_asset_digest(
-    repo: str,
-    tag: str,
+def _asset_from_release(
+    release: dict[str, object],
     asset_name: str,
-) -> tuple[str, str | None]:
-    """Return an asset's download URL and sha256 digest, if GitHub publishes one.
+) -> tuple[str, str | None] | None:
+    """Return an asset's download URL and sha256 digest from an already-fetched release."""
+    assets: list[dict[str, object]] = release.get("assets", [])  # type: ignore[assignment]
+    for asset in assets:
+        if asset.get("name") == asset_name:
+            return str(asset["browser_download_url"]), _asset_sha256(asset)
+    return None
+
+
+def _fetch_latest_versioned_release_asset_digest(
+    repo: str,
+    tag_pattern: str,
+    asset_name: str,
+) -> tuple[str, str | None, str]:
+    """Return an asset's URL, sha256, and tag from the newest *versioned* release.
+
+    Deliberately doesn't take a fixed tag - lists every release and picks
+    the most recently published one whose tag matches *tag_pattern*,
+    skipping rolling tags like ``"continuous"`` (reused release, assets
+    overwritten on every rebuild -
+    a hash pinned against it today can become permanently unfetchable once
+    upstream cuts a new one, since GitHub doesn't retain the overwritten
+    bytes). A tag matching *tag_pattern* is - by convention on both
+    ``AppImage/appimagetool`` (semver, e.g. ``"1.9.1"``) and
+    ``AppImage/type2-runtime`` (dated, e.g. ``"20251108"``) - a real,
+    immutable release that's never reused for a later build.
 
     Parameters
     ----------
     repo : str
         GitHub repository as ``owner/name``.
-    tag : str
-        Release tag (e.g. ``"continuous"``).
+    tag_pattern : str
+        Regex a genuine version tag must fully match (``re.fullmatch``).
     asset_name : str
-        Exact asset filename to look up within the release.
+        Exact asset filename to look up within the matched release.
 
     Returns
     -------
-    tuple[str, str | None]
-        Direct download URL, and its sha256 hex digest if published
-        (``None`` otherwise).
+    tuple[str, str | None, str]
+        Direct download URL, its sha256 hex digest if published, and the
+        resolved tag name.
 
     Raises
     ------
     RuntimeError
-        If the release or the named asset cannot be found.
+        If no release tag matches *tag_pattern*, or the named asset isn't
+        in the newest matching one.
 
     """
-    api_url = _GITHUB_RELEASE_TAG_API.format(repo=repo, tag=tag)
-    release = _github_api_get(api_url)
+    releases = _github_api_get(_GITHUB_RELEASES_API.format(repo=repo))
+    assert isinstance(releases, list)  # noqa: S101  # the releases list endpoint always returns a list
+    candidates = [
+        r
+        for r in releases
+        if isinstance(tag := r.get("tag_name"), str) and re.fullmatch(tag_pattern, tag)
+    ]
+    if not candidates:
+        msg = f"No release tag matching {tag_pattern!r} found in {repo}"
+        raise RuntimeError(msg)
+    newest = max(candidates, key=lambda r: str(r.get("published_at", "")))
+    tag = str(newest["tag_name"])
 
-    assets: list[dict[str, object]] = release.get("assets", [])  # type: ignore[assignment]
-    for asset in assets:
-        if asset.get("name") == asset_name:
-            return str(asset["browser_download_url"]), _asset_sha256(asset)
-
-    msg = f"Asset {asset_name!r} not found in {repo}@{tag}"
-    raise RuntimeError(msg)
+    found = _asset_from_release(newest, asset_name)
+    if found is None:
+        msg = f"Asset {asset_name!r} not found in {repo}@{tag}"
+        raise RuntimeError(msg)
+    url, sha256 = found
+    return url, sha256, tag
 
 
 def _resolution_source(explicit: str, cache_path: Path) -> str:

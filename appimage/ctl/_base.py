@@ -88,9 +88,12 @@ class BuildConfig:
         ``docs/reproducible-builds.md``).
     appimagetool_version : str
         Informational label recording which appimagetool build
-        ``appimagetool_sha256`` corresponds to (e.g. its own ``--version``
-        banner). Not used to select a download - AppImageKit's ``continuous``
-        release has no addressable historical versions - purely a
+        ``appimagetool_sha256`` corresponds to (its own ``--version``
+        banner). Not used to select a download - fresh downloads resolve
+        the newest genuine, immutable, versioned release (e.g. ``"1.9.1"``),
+        never the ``continuous`` tag, which GitHub overwrites in place on
+        every rebuild and so cannot be relied on to still serve the exact
+        bytes a hash was pinned against. This field is purely a
         human-readable record of what the pinned hash means. Written
         automatically by ``init`` alongside the hash.
     appimagetool_sha256 : str
@@ -172,7 +175,16 @@ class BuildConfig:
     runtime_sha256 : str
         Expected sha256 of the runtime file. Fresh downloads are also
         verified against the digest GitHub publishes per release asset even
-        when this is empty.
+        when this is empty. Resolved from the newest genuine, immutable,
+        versioned ``AppImage/type2-runtime`` release (e.g. ``"20251108"``),
+        never the ``continuous`` tag - same reasoning as
+        ``appimagetool_version`` above.
+    runtime_version : str
+        Informational label recording which runtime release
+        ``runtime_sha256`` corresponds to - the resolved release tag, since
+        the runtime stub has no ``--version`` of its own the way
+        appimagetool does. Written automatically by ``init`` alongside the
+        hash.
     verify_downloads : bool
         When true, any of appimagetool, the runtime file, or the Python
         archive that would otherwise be used unverified (no configured hash
@@ -263,6 +275,7 @@ class BuildConfig:
     appimagectl_version: str = ""
     runtime_file: str = ""
     runtime_sha256: str = ""
+    runtime_version: str = ""
     verify_downloads: bool = False
     require_zsyncmake: bool = False
     pylock: str = ""
@@ -328,6 +341,7 @@ class BuildConfig:
             appimagectl_version=cfg.get("appimagectl_version", ""),
             runtime_file=cfg.get("runtime_file", ""),
             runtime_sha256=cfg.get("runtime_sha256", ""),
+            runtime_version=cfg.get("runtime_version", ""),
             verify_downloads=cfg.get("verify_downloads", False),
             require_zsyncmake=cfg.get("require_zsyncmake", False),
             pylock=cfg.get("pylock", ""),
@@ -370,6 +384,7 @@ class _ResolvedBuild:
     python_dir: str
     runtime_file: str
     runtime_sha256: str
+    runtime_version: str
     verify_downloads: bool
     require_zsyncmake: bool
     pylock: str
@@ -914,6 +929,7 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         python_dir=config.python_dir,
         runtime_file=config.runtime_file,
         runtime_sha256=config.runtime_sha256,
+        runtime_version=config.runtime_version,
         verify_downloads=verify_downloads,
         require_zsyncmake=require_zsyncmake,
         pylock=config.pylock,

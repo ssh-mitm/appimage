@@ -40,6 +40,7 @@ def _optional_check_rows(resolved: _ResolvedBuild) -> list[tuple[str, str, str]]
         ("appimagetool_version", resolved.appimagetool_version),
         ("appimagetool_sha256", resolved.appimagetool_sha256),
         ("runtime_file", resolved.runtime_file),
+        ("runtime_version", resolved.runtime_version),
         ("runtime_sha256", resolved.runtime_sha256),
         ("pylock", resolved.pylock),
         ("build_pylock", resolved.build_pylock),

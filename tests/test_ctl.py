@@ -67,6 +67,7 @@ def make_resolved(**overrides: object) -> _ResolvedBuild:
         "appimagectl_version": "",
         "runtime_file": "",
         "runtime_sha256": "",
+        "runtime_version": "",
         "verify_downloads": False,
         "require_zsyncmake": False,
         "pylock": "",
@@ -214,7 +215,7 @@ def test_resolve_appimagetool_no_path_lookup(tmp_path: Path) -> None:
         dest.write_bytes(b"content")
 
     with patch("shutil.which") as mock_which, \
-         patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None)), \
+         patch("appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None, "1.9.1")), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         _resolve_appimagetool(resolved, cache, "x86_64")
 
@@ -251,7 +252,7 @@ def test_resolve_appimagetool_download_mismatch_deletes_cache(tmp_path: Path) ->
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"a-different-binary")
 
-    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None)), \
+    with patch("appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", None, "1.9.1")), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         with pytest.raises(RuntimeError):
             _resolve_appimagetool(resolved, cache, "x86_64")
@@ -267,7 +268,7 @@ def test_resolve_appimagetool_download_verifies_free_api_digest(tmp_path: Path) 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(content)
 
-    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", digest_of(content))), \
+    with patch("appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest", return_value=("https://example/appimagetool-x86_64.AppImage", digest_of(content), "1.9.1")), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         result = _resolve_appimagetool(resolved, cache, "x86_64")
 
@@ -280,16 +281,16 @@ def test_resolve_appimagetool_download_uses_arch_map_for_armv7l(tmp_path: Path) 
     resolved = make_resolved()
     captured = {}
 
-    def fake_fetch_digest(repo: str, tag: str, asset_name: str) -> tuple[str, str | None]:
+    def fake_fetch_digest(repo: str, tag_pattern: str, asset_name: str) -> tuple[str, str | None, str]:
         captured["repo"] = repo
-        captured["tag"] = tag
+        captured["tag_pattern"] = tag_pattern
         captured["asset_name"] = asset_name
-        return f"https://example/{asset_name}", None
+        return f"https://example/{asset_name}", None, "1.9.1"
 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"content")
 
-    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", side_effect=fake_fetch_digest), \
+    with patch("appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest", side_effect=fake_fetch_digest), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         _resolve_appimagetool(resolved, cache, "armv7l")
 
@@ -433,8 +434,8 @@ def test_resolve_appimagetool_does_not_abort_for_fresh_download(tmp_path: Path) 
     resolved = make_resolved()
 
     with patch(
-             "appimage.ctl._appimagetool._fetch_release_asset_digest",
-             return_value=("https://example/appimagetool", None),
+             "appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest",
+             return_value=("https://example/appimagetool", None, "1.9.1"),
          ), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         result = _resolve_appimagetool(resolved, cache, "x86_64")
@@ -451,9 +452,10 @@ def test_resolve_runtime_file_config_path_hash_match(tmp_path: Path) -> None:
     runtime.write_bytes(b"runtime-content")
     resolved = make_resolved(runtime_file=str(runtime), runtime_sha256=digest_of(b"runtime-content"))
 
-    result = _resolve_runtime_file(resolved, tmp_path / "cache", "x86_64")
+    result, tag = _resolve_runtime_file(resolved, tmp_path / "cache", "x86_64")
 
     assert result == runtime
+    assert tag is None  # resolved from config, not a fresh download - no tag to report
     assert runtime.exists()
 
 
@@ -485,11 +487,12 @@ def test_resolve_runtime_file_download_verifies_free_api_digest(tmp_path: Path) 
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(content)
 
-    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", digest_of(content))), \
+    with patch("appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest", return_value=("https://example/runtime-x86_64", digest_of(content), "20251108")), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
-        result = _resolve_runtime_file(resolved, cache, "x86_64")
+        result, tag = _resolve_runtime_file(resolved, cache, "x86_64")
 
     assert result == cache
+    assert tag == "20251108"
     assert cache.exists()
 
 
@@ -500,7 +503,7 @@ def test_resolve_runtime_file_download_mismatch_deletes_cache(tmp_path: Path) ->
     def fake_download(_url: str, dest: Path) -> None:
         dest.write_bytes(b"a-different-runtime")
 
-    with patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", None)), \
+    with patch("appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest", return_value=("https://example/runtime-x86_64", None, "20251108")), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         with pytest.raises(RuntimeError):
             _resolve_runtime_file(resolved, cache, "x86_64")
@@ -520,7 +523,7 @@ def test_resolve_runtime_file_no_path_lookup(tmp_path: Path) -> None:
         dest.write_bytes(b"content")
 
     with patch("shutil.which") as mock_which, \
-         patch("appimage.ctl._appimagetool._fetch_release_asset_digest", return_value=("https://example/runtime-x86_64", None)), \
+         patch("appimage.ctl._appimagetool._fetch_latest_versioned_release_asset_digest", return_value=("https://example/runtime-x86_64", None, "20251108")), \
          patch("appimage.ctl._appimagetool._download", side_effect=fake_download):
         _resolve_runtime_file(resolved, cache, "x86_64")
 
@@ -669,7 +672,7 @@ def test_build_warns_when_packaging_does_not_produce_zsync_file(tmp_path: Path, 
          patch.object(build_module.subprocess, "run", manager.subprocess_run), \
          caplog.at_level("WARNING"):
         manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
-        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._resolve_runtime_file.return_value = (Path("/fake/runtime-x86_64"), None)
         manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
         build(config, tmp_path)
 
@@ -786,7 +789,7 @@ def test_write_config_writes_suggested_update_info(tmp_path: Path) -> None:
 
     with patch("appimage.ctl._base.platform.machine", return_value="x86_64"), \
          patch("appimage.ctl.init._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.ctl.init._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl.init._resolve_runtime_file", return_value=(runtime_path, None)), \
          patch("appimage.ctl.init._appimagetool_version_string", return_value="continuous build"), \
          patch("appimage.ctl.init._sha256_file", return_value="c" * 64), \
          patch("appimage.ctl.init._resolve_appimage_pin_sha256", return_value="d" * 64):
@@ -810,7 +813,7 @@ def test_write_config_does_not_overwrite_existing_update_info(tmp_path: Path) ->
     runtime_path = tmp_path / "runtime-x86_64"
 
     with patch("appimage.ctl.init._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.ctl.init._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl.init._resolve_runtime_file", return_value=(runtime_path, None)), \
          patch("appimage.ctl.init._appimagetool_version_string", return_value="continuous build"), \
          patch("appimage.ctl.init._sha256_file", return_value="c" * 64), \
          patch("appimage.ctl.init._resolve_appimage_pin_sha256", return_value="d" * 64):
@@ -1719,7 +1722,7 @@ def test_build_compiles_pyc_after_pre_package_before_appimagetool(tmp_path: Path
          patch.object(build_module, "_stage_runtime_file_for_appimagetool", manager._stage_runtime_file), \
          patch.object(build_module.subprocess, "run", manager.subprocess_run):
         manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
-        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._resolve_runtime_file.return_value = (Path("/fake/runtime-x86_64"), None)
         manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
         build(config, tmp_path)
 
@@ -1754,7 +1757,7 @@ def test_build_respects_source_date_epoch_env_var(tmp_path: Path) -> None:
          patch.object(build_module.subprocess, "run", manager.subprocess_run), \
          patch.dict("os.environ", {"SOURCE_DATE_EPOCH": "1700000000"}):
         manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
-        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._resolve_runtime_file.return_value = (Path("/fake/runtime-x86_64"), None)
         manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
         build(config, tmp_path)
 
@@ -1781,7 +1784,7 @@ def test_build_pins_locale_for_appimagetool(tmp_path: Path) -> None:
          patch.object(build_module, "_stage_runtime_file_for_appimagetool", manager._stage_runtime_file), \
          patch.object(build_module.subprocess, "run", manager.subprocess_run):
         manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
-        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._resolve_runtime_file.return_value = (Path("/fake/runtime-x86_64"), None)
         manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
         build(config, tmp_path)
 
@@ -1809,7 +1812,7 @@ def test_build_strips_xattrs_when_packaging(tmp_path: Path) -> None:
          patch.object(build_module, "_stage_runtime_file_for_appimagetool", manager._stage_runtime_file), \
          patch.object(build_module.subprocess, "run", manager.subprocess_run):
         manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
-        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._resolve_runtime_file.return_value = (Path("/fake/runtime-x86_64"), None)
         manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
         build(config, tmp_path)
 
@@ -1838,7 +1841,7 @@ def test_build_disables_duplicate_detection_when_packaging(tmp_path: Path) -> No
          patch.object(build_module, "_stage_runtime_file_for_appimagetool", manager._stage_runtime_file), \
          patch.object(build_module.subprocess, "run", manager.subprocess_run):
         manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
-        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._resolve_runtime_file.return_value = (Path("/fake/runtime-x86_64"), None)
         manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
         build(config, tmp_path)
 
@@ -1867,7 +1870,7 @@ def test_build_pins_single_processor_when_packaging(tmp_path: Path) -> None:
          patch.object(build_module, "_stage_runtime_file_for_appimagetool", manager._stage_runtime_file), \
          patch.object(build_module.subprocess, "run", manager.subprocess_run):
         manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
-        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._resolve_runtime_file.return_value = (Path("/fake/runtime-x86_64"), None)
         manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
         build(config, tmp_path)
 
@@ -2064,7 +2067,7 @@ def test_write_config_pins_appimagetool_when_unset(tmp_path: Path) -> None:
     runtime_path = tmp_path / "runtime-x86_64"
 
     with patch("appimage.ctl.init._resolve_appimagetool", return_value=tool_path) as mock_resolve_tool, \
-         patch("appimage.ctl.init._resolve_runtime_file", return_value=runtime_path) as mock_resolve_runtime, \
+         patch("appimage.ctl.init._resolve_runtime_file", return_value=(runtime_path, None)) as mock_resolve_runtime, \
          patch("appimage.ctl.init._appimagetool_version_string", return_value="continuous build (commit abc), build 1"), \
          patch("appimage.ctl.init._sha256_file", return_value="c" * 64), \
          patch("appimage.ctl.init._resolve_appimage_pin_sha256", return_value="d" * 64), \
@@ -2087,7 +2090,7 @@ def test_write_config_pins_appimage_runtime_module_when_unset(tmp_path: Path) ->
     with patch("appimage.ctl._base.importlib.metadata.version", return_value="2.0.1"), \
          patch("appimage.ctl.init._resolve_appimage_pin_sha256", return_value="d" * 64) as mock_lookup, \
          patch("appimage.ctl.init._resolve_appimagetool", return_value=tmp_path / "appimagetool"), \
-         patch("appimage.ctl.init._resolve_runtime_file", return_value=tmp_path / "runtime-x86_64"), \
+         patch("appimage.ctl.init._resolve_runtime_file", return_value=(tmp_path / "runtime-x86_64", None)), \
          patch("appimage.ctl.init._appimagetool_version_string", return_value="continuous build"), \
          patch("appimage.ctl.init._sha256_file", return_value="c" * 64), \
          patch("appimage.ctl.init._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")):
@@ -2119,7 +2122,7 @@ def test_write_config_pins_python_date_when_unset(tmp_path: Path) -> None:
 
     with patch("appimage.ctl.init._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")) as mock_resolve_python, \
          patch("appimage.ctl.init._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.ctl.init._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl.init._resolve_runtime_file", return_value=(runtime_path, None)), \
          patch("appimage.ctl.init._appimagetool_version_string", return_value="continuous build"), \
          patch("appimage.ctl.init._sha256_file", return_value="c" * 64), \
          patch("appimage.ctl.init._resolve_appimage_pin_sha256", return_value="d" * 64):
@@ -2159,7 +2162,7 @@ def test_update_tools_reresolves_python_date_against_latest(tmp_path: Path) -> N
         return_value=("http://example/py.tar.gz", "f" * 64, "20260901"),
     ) as mock_resolve_python, patch(
         "appimage.ctl.init._resolve_appimagetool", return_value=tool_path
-    ), patch("appimage.ctl.init._resolve_runtime_file", return_value=runtime_path), patch(
+    ), patch("appimage.ctl.init._resolve_runtime_file", return_value=(runtime_path, None)), patch(
         "appimage.ctl.init._appimagetool_version_string", return_value="continuous build"
     ), patch("appimage.ctl.init._sha256_file", return_value="c" * 64), patch(
         "appimage.ctl.init._resolve_appimage_pin_sha256", return_value="d" * 64
@@ -2219,7 +2222,7 @@ def test_write_config_does_not_write_unresolvable_entry_point(tmp_path: Path) ->
     runtime_path = tmp_path / "runtime-x86_64"
 
     with patch("appimage.ctl.init._resolve_appimagetool", return_value=tool_path), \
-         patch("appimage.ctl.init._resolve_runtime_file", return_value=runtime_path), \
+         patch("appimage.ctl.init._resolve_runtime_file", return_value=(runtime_path, None)), \
          patch("appimage.ctl.init._appimagetool_version_string", return_value="continuous build"), \
          patch("appimage.ctl.init._sha256_file", return_value="c" * 64), \
          patch("appimage.ctl.init._resolve_python_url", return_value=("http://example/py.tar.gz", "f" * 64, "20260101")), \

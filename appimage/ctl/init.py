@@ -109,8 +109,10 @@ def _pinned_download_fields(
 
     if "runtime_sha256" not in existing:
         runtime_cache = _runtime_cache_path(build_dir, arch)
-        runtime = _resolve_runtime_file(resolved, runtime_cache, arch)
+        runtime, runtime_tag = _resolve_runtime_file(resolved, runtime_cache, arch)
         new["runtime_sha256"] = _sha256_file(runtime)
+        if runtime_tag and "runtime_version" not in existing:
+            new["runtime_version"] = runtime_tag
 
     if "appimagectl_version" not in existing:
         new["appimagectl_version"] = importlib.metadata.version("appimage")
