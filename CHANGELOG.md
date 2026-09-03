@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `verify-appimage-reproducible-build.sh` now builds the bundled `appimage` runtime module from the local checkout instead of resolving it from PyPI, so it tests the current code instead of failing on unreleased versions
+
 ## [4.0.0] - 2026-09-03
 
 ### Added

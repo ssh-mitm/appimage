@@ -11,10 +11,27 @@ cd "$(dirname "$0")/.."
 
 python3 -m pip install . --no-deps --quiet
 
+# appimage.ctl bundles the "appimage" runtime module (AppRun/AppStarter) into
+# every AppDir by pinning appimage==<the version currently running the
+# build> - resolved as a normal pip requirement against whatever index is
+# configured, i.e. PyPI by default. That's correct for real end users, but
+# wrong here: this script exists to test *this checkout's* code, and a
+# version bump commit (or any unreleased runtime change) has no matching
+# release on PyPI yet, so the build fails on a package that doesn't exist
+# there rather than testing the code actually being verified. Building a
+# wheel from the checkout and adding it to PIP_FIND_LINKS fixes this with no
+# appimage.ctl changes needed: every pip subprocess it runs inherits the
+# calling environment as-is (see docs/reproducible-builds.md's "Private
+# package indexes" section), and PyPI never has this exact version, so
+# there's no ambiguity about which copy pip resolves.
+LOCAL_WHEELHOUSE=$(mktemp -d)
+python3 -m pip wheel . --no-deps --quiet -w "$LOCAL_WHEELHOUSE"
+export PIP_FIND_LINKS="$LOCAL_WHEELHOUSE"
+
 EXAMPLE_DIR="examples/myapp"
 OUT_A=$(mktemp -d)
 OUT_B=$(mktemp -d)
-trap 'rm -rf "$OUT_A" "$OUT_B" "$EXAMPLE_DIR/build" "$EXAMPLE_DIR/dist"' EXIT
+trap 'rm -rf "$OUT_A" "$OUT_B" "$LOCAL_WHEELHOUSE" "$EXAMPLE_DIR/build" "$EXAMPLE_DIR/dist"' EXIT
 
 for OUT in "$OUT_A" "$OUT_B"; do
     echo "==> building into $OUT"
