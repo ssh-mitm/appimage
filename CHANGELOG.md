@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Cached Python tarball is now keyed by `python`/`python_date`, so changing either no longer silently reuses a stale, mismatched cache
+- Installed Python is now verified to actually match the configured `python` version, failing immediately instead of confusingly later
+- Subprocesses (`pip`, `compileall`, `appimagetool`) now run with a pinned `PYTHONHASHSEED`/locale; `reproducible = true` also pins them for appimagectl's own process
+
 ## [3.0.1] - 2026-09-02
 
 ### Fixed

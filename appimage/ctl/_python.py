@@ -22,14 +22,25 @@ from appimage.ctl._download import (
 _log: Final = logging.getLogger(__name__)
 
 
-def _python_tarball_cache_path(build_dir: Path) -> Path:
+def _python_tarball_cache_path(build_dir: Path, python: str, python_date: str) -> Path:
     """Return the conventional build-cache path for a resolved Python tarball.
 
     The one place encoding this filename convention - see
     ``_appimagetool._appimagetool_cache_path`` for the equivalent for
     appimagetool/the runtime stub, and the same rationale.
+
+    Keyed by *python* and *python_date* - a fixed ``python.tar.gz`` name
+    would silently keep serving whatever happened to be cached under it
+    even after ``python`` (e.g. ``3.11`` -> ``3.12``) or ``python_date``
+    changes in config, extracting a Python that doesn't match what the
+    rest of the build assumes (``_compile_pyc``/``_scrub_build_paths``
+    both derive their own ``site-packages`` path from *python*) - and
+    without ``python_sha256`` set yet, nothing else catches the mismatch
+    either (see ``_resolve_python_tarball``: the cached file is only
+    hash-verified when a hash is actually configured). Changing either
+    value now simply misses the old cache entry instead of reusing it.
     """
-    return build_dir / "python.tar.gz"
+    return build_dir / f"python-{python}-{python_date or 'latest'}.tar.gz"
 
 
 _ARCH_MAP: Final[dict[str, str]] = {
@@ -121,12 +132,42 @@ def _install_python(
             raise FileNotFoundError(msg)
         _log.info("Using Python directory (trusted, unverified): %s", source)
         shutil.copytree(source, appdir / "python")
+        _verify_installed_python_version(resolved, appdir)
         return
 
     python_tarball = _resolve_python_tarball(resolved, python_cache, arch)
     _log.info("Extracting Python...")
     with tarfile.open(python_tarball) as tar:
         tar.extractall(appdir)  # noqa: S202  # nosec B202
+    _verify_installed_python_version(resolved, appdir)
+
+
+def _verify_installed_python_version(resolved: _ResolvedBuild, appdir: Path) -> None:
+    """Confirm ``appdir/python`` actually contains the configured *python* version.
+
+    A backstop independent of *how* ``appdir/python`` was populated - a
+    stale cache entry, a hand-edited ``python_archive``, or a
+    ``python_dir`` pointed at the wrong install could all produce a tree
+    whose ``lib/pythonX.Y`` doesn't match ``resolved.python``, and every
+    later step (``_compile_pyc``, ``_scrub_build_paths``) derives its own
+    ``site-packages`` path from *that* value - so a mismatch here doesn't
+    fail loudly where it happened, it fails confusingly several steps
+    later (or not at all, silently shipping the wrong interpreter).
+    Checking the one thing that actually matters - does the version this
+    build asked for exist where everything downstream expects it - right
+    after installation catches it immediately, with a message that
+    actually names the problem.
+    """
+    expected = appdir / "python" / "lib" / f"python{resolved.python}"
+    if not expected.is_dir():
+        msg = (
+            f"Expected Python {resolved.python} in the bundled interpreter "
+            f"(missing {expected}), but the installed Python doesn't have it - "
+            "wrong python_archive/python_dir, or a stale build cache from a "
+            "different python/python_date. Remove the build directory's cached "
+            "Python archive and rebuild."
+        )
+        raise RuntimeError(msg)
 
 
 def _resolve_python_tarball(

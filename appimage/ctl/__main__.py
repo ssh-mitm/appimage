@@ -3,6 +3,7 @@
 
 import argparse
 import logging
+import os
 import subprocess  # nosec B404
 import sys
 from pathlib import Path
@@ -363,6 +364,40 @@ def _apply_cli_overrides(config: BuildConfig, args: argparse.Namespace) -> None:
             setattr(config, name, value)
 
 
+_REPRODUCIBLE_PROCESS_ENV: Final = {"PYTHONHASHSEED": "0", "LC_ALL": "C"}
+
+
+def _ensure_reproducible_process_env(config: BuildConfig) -> None:
+    """Re-exec this process with a fixed hash seed and locale, if not already set.
+
+    ``PYTHONHASHSEED`` can only be applied at interpreter startup - setting
+    it on ``os.environ`` mid-run has no effect on the *current* process's
+    hash randomization, only on subprocesses it spawns from that point on.
+    So if this process's own iteration order over an unordered collection
+    (a ``set``, or dict/set operations that don't preserve insertion order)
+    ever affected build output, running under a randomized seed would make
+    that output vary from run to run - even though nothing today is known
+    to rely on such ordering. Re-executing is the only way to actually fix
+    *this* process's own seed, rather than merely a subprocess's.
+
+    Gated behind ``reproducible`` so a plain build's behavior and process
+    identity are unchanged - this only kicks in once the build has already
+    opted into every other reproducibility guarantee (see ``build()``),
+    consistent with ``reproducible`` implying ``verify_downloads`` and
+    ``require_zsyncmake`` on top of the pins it requires outright.
+    """
+    if not config.reproducible:
+        return
+    if all(os.environ.get(k) == v for k, v in _REPRODUCIBLE_PROCESS_ENV.items()):
+        return
+    env = {**os.environ, **_REPRODUCIBLE_PROCESS_ENV}
+    os.execve(  # noqa: S606  # nosec B606
+        sys.executable,
+        [sys.executable, *sys.argv],
+        env,
+    )
+
+
 def main() -> None:
     """Build an AppImage for the project in the current directory."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -373,6 +408,7 @@ def main() -> None:
     try:
         config = BuildConfig.from_pyproject(project_root)
         _apply_cli_overrides(config, args)
+        _ensure_reproducible_process_env(config)
 
         if args.command == "check":
             ok = check(config, project_root)

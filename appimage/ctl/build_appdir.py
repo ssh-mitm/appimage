@@ -341,11 +341,23 @@ def _isolated_subprocess_env() -> dict[str, str]:
       omitted it from the AppDir entirely, in a project that has it as a
       real, needed dependency.
 
+    Also pins ``PYTHONHASHSEED``/``LC_ALL`` so pip's and the build
+    backend's own behavior can't vary with the build host's hash
+    randomization seed or locale, the same reasoning as
+    ``_ensure_reproducible_process_env`` in ``__main__.py`` for this
+    project's own process.
+
     Every subprocess that runs the bundled interpreter for an install -
     ``pip install`` or ``pip lock`` alike - gets this environment so none
     of them can reintroduce either leak.
     """
-    return {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
+    return {
+        **os.environ,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONHASHSEED": "0",
+        "LC_ALL": "C",
+    }
 
 
 def _install_hashed_requirement(
@@ -927,7 +939,11 @@ def _resolve_for_appdir(
     arch = platform.machine()
     build_dir = project_root / resolved.build_dir
     appdir = build_dir / "AppDir"
-    python_cache = _python_tarball_cache_path(build_dir)
+    python_cache = _python_tarball_cache_path(
+        build_dir,
+        resolved.python,
+        resolved.python_date,
+    )
     return resolved, arch, appdir, python_cache
 
 

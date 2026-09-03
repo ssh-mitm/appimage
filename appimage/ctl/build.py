@@ -50,7 +50,11 @@ def build(config: BuildConfig, project_root: Path) -> None:
     build_dir = project_root / resolved.build_dir
     appdir = build_dir / "AppDir"
     dist_dir = project_root / resolved.dist_dir
-    python_cache = _python_tarball_cache_path(build_dir)
+    python_cache = _python_tarball_cache_path(
+        build_dir,
+        resolved.python,
+        resolved.python_date,
+    )
     appimagetool_cache = _appimagetool_cache_path(build_dir, arch)
     runtime_cache = _runtime_cache_path(build_dir, arch)
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
@@ -97,10 +101,18 @@ def build(config: BuildConfig, project_root: Path) -> None:
             cmd += ["-u", resolved.update_info]
         cmd += [str(appdir), output_name]
 
+        # LC_ALL=C so mksquashfs's own C-library string handling (and
+        # appimagetool's glib argument parsing) can't vary with the build
+        # host's locale - no PYTHONHASHSEED here, appimagetool/mksquashfs
+        # are native binaries, not Python.
         subprocess.run(  # noqa: S603  # nosec B603
             cmd,
             cwd=dist_dir,
-            env={**os.environ, "SOURCE_DATE_EPOCH": str(epoch)},
+            env={
+                **os.environ,
+                "SOURCE_DATE_EPOCH": str(epoch),
+                "LC_ALL": "C",
+            },
             check=True,
         )
 

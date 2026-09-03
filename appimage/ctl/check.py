@@ -246,7 +246,11 @@ def _predict_unverified_downloads(resolved: _ResolvedBuild, project_root: Path) 
             "python archive",
             resolved.python_archive,
             resolved.python_sha256,
-            _python_tarball_cache_path(build_dir),
+            _python_tarball_cache_path(
+                build_dir,
+                resolved.python,
+                resolved.python_date,
+            ),
             "python_sha256",
         )
 

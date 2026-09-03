@@ -87,6 +87,23 @@ def digest_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _fake_extractall(python_version: str = "3.11"):
+    """Return a ``tarfile.extractall``-compatible side_effect.
+
+    Creates ``<appdir>/python/lib/python<version>`` so
+    ``_verify_installed_python_version``'s post-extraction check - which
+    every real extraction now goes through - passes for tests that mock
+    the extraction itself and aren't exercising that check specifically.
+    """
+
+    def _extract(appdir: Path, *_args: object, **_kwargs: object) -> None:
+        (Path(appdir) / "python" / "lib" / f"python{python_version}").mkdir(
+            parents=True, exist_ok=True,
+        )
+
+    return _extract
+
+
 # ---------------------------------------------------------------------------
 # _sha256_file / _verify_sha256
 # ---------------------------------------------------------------------------
@@ -1504,6 +1521,8 @@ def test_isolated_subprocess_env_disables_user_site_and_bytecode() -> None:
     env = _isolated_subprocess_env()
     assert env["PYTHONNOUSERSITE"] == "1"
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert env["PYTHONHASHSEED"] == "0"
+    assert env["LC_ALL"] == "C"
 
 
 def test_install_targets_disables_user_site(tmp_path: Path) -> None:
@@ -1593,7 +1612,9 @@ def test_prepare_python_installs_with_no_compile(tmp_path: Path) -> None:
          patch("appimage.ctl._python.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.build_appdir.subprocess.run") as mock_run, \
          patch("appimage.ctl.build_appdir._resolve_appimage_pin_sha256", return_value=None):
-        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall(),
+        )
         _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     args = mock_run.call_args.args[0]
@@ -1684,6 +1705,33 @@ def test_build_respects_source_date_epoch_env_var(tmp_path: Path) -> None:
 
     packaging_call = next(c for c in manager.mock_calls if c[0] == "subprocess_run")
     assert packaging_call.kwargs["env"]["SOURCE_DATE_EPOCH"] == "1700000000"
+
+
+def test_build_pins_locale_for_appimagetool(tmp_path: Path) -> None:
+    build_module = importlib.import_module("appimage.ctl.build")
+    appdir_module = importlib.import_module("appimage.ctl.build_appdir")
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "myapp"\nscripts = { myapp = "myapp:main" }\n'
+    )
+    config = BuildConfig()
+
+    manager = MagicMock()
+    with patch.object(appdir_module, "_prepare_python", manager._prepare_python), \
+         patch.object(appdir_module, "_copy_assets", manager._copy_assets), \
+         patch.object(appdir_module, "_copy_extra_files", manager._copy_extra_files), \
+         patch.object(appdir_module, "_compile_pyc", manager._compile_pyc), \
+         patch.object(build_module, "_resolve_appimagetool", manager._resolve_appimagetool), \
+         patch.object(build_module, "_resolve_runtime_file", manager._resolve_runtime_file), \
+         patch.object(build_module, "_stage_runtime_file_for_appimagetool", manager._stage_runtime_file), \
+         patch.object(build_module.subprocess, "run", manager.subprocess_run):
+        manager._resolve_appimagetool.return_value = Path("/fake/appimagetool")
+        manager._resolve_runtime_file.return_value = Path("/fake/runtime-x86_64")
+        manager._stage_runtime_file.return_value = Path("/fake/staged/runtime-x86_64")
+        build(config, tmp_path)
+
+    packaging_call = next(c for c in manager.mock_calls if c[0] == "subprocess_run")
+    assert packaging_call.kwargs["env"]["LC_ALL"] == "C"
 
 
 def test_build_strips_xattrs_when_packaging(tmp_path: Path) -> None:
@@ -1811,6 +1859,7 @@ def test_install_python_copies_python_dir_unverified(tmp_path: Path) -> None:
     source = tmp_path / "prebuilt-python"
     (source / "bin").mkdir(parents=True)
     (source / "bin" / "python3").write_text("fake interpreter")
+    (source / "lib" / "python3.11").mkdir(parents=True)
     appdir = tmp_path / "AppDir"
     appdir.mkdir()
 
@@ -1832,6 +1881,82 @@ def test_install_python_raises_when_python_dir_missing(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         _install_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64")
+
+
+def test_install_python_raises_when_python_dir_has_wrong_version(tmp_path: Path) -> None:
+    """A python_dir that doesn't actually contain the configured version -
+    e.g. pointed at the wrong install by mistake - must fail loudly here,
+    not several steps later when _compile_pyc/_scrub_build_paths look for
+    a site-packages that was never there.
+    """
+    from appimage.ctl._python import _install_python
+
+    source = tmp_path / "prebuilt-python"
+    (source / "bin").mkdir(parents=True)
+    (source / "bin" / "python3").write_text("fake interpreter")
+    (source / "lib" / "python3.13").mkdir(parents=True)  # wrong version
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+
+    resolved = make_resolved(python="3.11", python_dir=str(source))
+
+    with pytest.raises(RuntimeError, match="Expected Python 3.11"):
+        _install_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64")
+
+
+def test_install_python_raises_when_cached_tarball_has_wrong_version(
+    tmp_path: Path,
+) -> None:
+    """A stale cached tarball from a different python/python_date must not be
+    silently extracted and used - this is the actual bug this whole set of
+    changes fixes: _resolve_python_tarball only hash-verifies the cache when
+    python_sha256 is set, so an unpinned config had no other safety net.
+    """
+    from appimage.ctl._python import _install_python
+
+    appdir = tmp_path / "AppDir"
+    appdir.mkdir()
+    tarball = tmp_path / "python.tar.gz"
+    tarball.write_bytes(b"")
+
+    resolved = make_resolved(python="3.11")
+
+    with patch("appimage.ctl._python._resolve_python_tarball", return_value=tarball), \
+         patch("appimage.ctl._python.tarfile.open") as mock_tarfile:
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall("3.13"),  # simulates a stale, mismatched cache
+        )
+        with pytest.raises(RuntimeError, match="Expected Python 3.11"):
+            _install_python(resolved, appdir, tarball, "x86_64")
+
+
+# ---------------------------------------------------------------------------
+# _python_tarball_cache_path
+#
+# Regression coverage for a real bug: the cache filename used to be fixed
+# ("python.tar.gz"), so changing python or python_date in config kept
+# silently reusing whatever was already cached under that name - extracting
+# a Python version that doesn't match what the rest of the build assumes.
+# ---------------------------------------------------------------------------
+
+def test_python_tarball_cache_path_varies_with_python_version() -> None:
+    from appimage.ctl._python import _python_tarball_cache_path
+
+    build_dir = Path("/fake/build")
+    path_311 = _python_tarball_cache_path(build_dir, "3.11", "20260901")
+    path_312 = _python_tarball_cache_path(build_dir, "3.12", "20260901")
+
+    assert path_311 != path_312
+
+
+def test_python_tarball_cache_path_varies_with_python_date() -> None:
+    from appimage.ctl._python import _python_tarball_cache_path
+
+    build_dir = Path("/fake/build")
+    path_old = _python_tarball_cache_path(build_dir, "3.11", "20260101")
+    path_new = _python_tarball_cache_path(build_dir, "3.11", "20260901")
+
+    assert path_old != path_new
 
 
 # ---------------------------------------------------------------------------
@@ -2338,7 +2463,7 @@ def test_predict_unverified_downloads_flags_cached_python_archive_without_pin(
 
     build_dir = tmp_path / "build"
     build_dir.mkdir()
-    _python_tarball_cache_path(build_dir).write_bytes(b"x")
+    _python_tarball_cache_path(build_dir, "3.11", "").write_bytes(b"x")
 
     resolved = make_resolved(verify_downloads=True)
     _predict_unverified_downloads(resolved, tmp_path)
@@ -2359,7 +2484,7 @@ def test_predict_unverified_downloads_skips_python_archive_when_python_dir_set(
 
     build_dir = tmp_path / "build"
     build_dir.mkdir()
-    _python_tarball_cache_path(build_dir).write_bytes(b"x")
+    _python_tarball_cache_path(build_dir, "3.11", "").write_bytes(b"x")
 
     resolved = make_resolved(verify_downloads=True, python_dir="/some/trusted/python")
     _predict_unverified_downloads(resolved, tmp_path)
@@ -2420,7 +2545,9 @@ def test_prepare_python_uses_pylock_when_configured(tmp_path: Path) -> None:
     with patch("appimage.ctl._python._resolve_python_tarball", return_value=tarball), \
          patch("appimage.ctl._python.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.build_appdir.subprocess.run") as mock_run:
-        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall(),
+        )
         _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     calls = [c.args[0] for c in mock_run.call_args_list]
@@ -2445,7 +2572,9 @@ def test_prepare_python_raises_when_pylock_missing(tmp_path: Path) -> None:
 
     with patch("appimage.ctl._python._resolve_python_tarball", return_value=tarball), \
          patch("appimage.ctl._python.tarfile.open") as mock_tarfile:
-        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall(),
+        )
         with pytest.raises(FileNotFoundError):
             _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
@@ -2534,7 +2663,9 @@ def test_prepare_python_passes_build_pylock_without_pylock(tmp_path: Path) -> No
          patch("appimage.ctl._python.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.build_appdir.subprocess.run") as mock_run, \
          patch("appimage.ctl.build_appdir._resolve_appimage_pin_sha256", return_value=None):
-        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall(),
+        )
         _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     (project_call,) = [c.args[0] for c in mock_run.call_args_list]
@@ -2562,7 +2693,9 @@ def test_prepare_python_passes_build_pylock_with_pylock(tmp_path: Path) -> None:
     with patch("appimage.ctl._python._resolve_python_tarball", return_value=tarball), \
          patch("appimage.ctl._python.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.build_appdir.subprocess.run") as mock_run:
-        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall(),
+        )
         _prepare_python(resolved, appdir, tmp_path / "python.tar.gz", "x86_64", tmp_path)
 
     local_call, lock_call = [c.args[0] for c in mock_run.call_args_list]
@@ -2825,7 +2958,9 @@ def test_lock_writes_both_lock_paths_to_pyproject_when_unset(tmp_path: Path) -> 
          patch(
              "appimage.ctl.lock._generate_build_pylock", return_value=tmp_path / "pylock.build.toml",
          ) as mock_generate_build:
-        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall(),
+        )
         lock(config, tmp_path)
 
     mock_generate.assert_called_once()
@@ -2851,7 +2986,9 @@ def test_lock_skips_write_when_already_set(tmp_path: Path) -> None:
          patch("appimage.ctl._python.tarfile.open") as mock_tarfile, \
          patch("appimage.ctl.lock._generate_lock", return_value=tmp_path / "custom-lock.toml"), \
          patch("appimage.ctl.lock._generate_build_pylock", return_value=tmp_path / "custom-build-lock.toml"):
-        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock()
+        mock_tarfile.return_value.__enter__.return_value.extractall = MagicMock(
+            side_effect=_fake_extractall(),
+        )
         lock(config, tmp_path)
 
     content = (tmp_path / "pyproject.toml").read_text()
@@ -2916,3 +3053,52 @@ def test_enable_reproducible_does_not_write_flag_when_build_fails(tmp_path: Path
 
     content = (tmp_path / "pyproject.toml").read_text()
     assert "reproducible" not in content
+
+
+# ---------------------------------------------------------------------------
+# _ensure_reproducible_process_env
+#
+# PYTHONHASHSEED can't be applied to an already-running interpreter, only at
+# startup - so pinning it for this process (not just subprocesses) requires
+# re-executing. Gated behind reproducible=True so a plain build's process
+# identity is unaffected.
+# ---------------------------------------------------------------------------
+
+def test_ensure_reproducible_process_env_noop_when_not_reproducible() -> None:
+    from appimage.ctl.__main__ import _ensure_reproducible_process_env
+
+    config = BuildConfig(reproducible=False)
+
+    with patch("appimage.ctl.__main__.os.execve") as mock_execve, \
+         patch.dict("os.environ", {}, clear=True):
+        _ensure_reproducible_process_env(config)
+
+    mock_execve.assert_not_called()
+
+
+def test_ensure_reproducible_process_env_noop_when_already_set() -> None:
+    from appimage.ctl.__main__ import _ensure_reproducible_process_env
+
+    config = BuildConfig(reproducible=True)
+
+    with patch("appimage.ctl.__main__.os.execve") as mock_execve, \
+         patch.dict("os.environ", {"PYTHONHASHSEED": "0", "LC_ALL": "C"}):
+        _ensure_reproducible_process_env(config)
+
+    mock_execve.assert_not_called()
+
+
+def test_ensure_reproducible_process_env_reexecs_when_reproducible_and_unset() -> None:
+    from appimage.ctl.__main__ import _ensure_reproducible_process_env
+
+    config = BuildConfig(reproducible=True)
+
+    with patch("appimage.ctl.__main__.os.execve") as mock_execve, \
+         patch.dict("os.environ", {}, clear=True):
+        _ensure_reproducible_process_env(config)
+
+    mock_execve.assert_called_once()
+    args = mock_execve.call_args.args
+    exec_env = args[2]
+    assert exec_env["PYTHONHASHSEED"] == "0"
+    assert exec_env["LC_ALL"] == "C"
