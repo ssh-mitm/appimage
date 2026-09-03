@@ -364,11 +364,15 @@ def _apply_cli_overrides(config: BuildConfig, args: argparse.Namespace) -> None:
             setattr(config, name, value)
 
 
-_REPRODUCIBLE_PROCESS_ENV: Final = {"PYTHONHASHSEED": "0", "LC_ALL": "C"}
+_REPRODUCIBLE_PROCESS_ENV: Final = {
+    "PYTHONHASHSEED": "0",
+    "LC_ALL": "C",
+    "TZ": "UTC",
+}
 
 
 def _ensure_reproducible_process_env(config: BuildConfig) -> None:
-    """Re-exec this process with a fixed hash seed and locale, if not already set.
+    """Re-exec this process with a fixed hash seed, locale, and timezone, if not already set.
 
     ``PYTHONHASHSEED`` can only be applied at interpreter startup - setting
     it on ``os.environ`` mid-run has no effect on the *current* process's
@@ -378,7 +382,14 @@ def _ensure_reproducible_process_env(config: BuildConfig) -> None:
     ever affected build output, running under a randomized seed would make
     that output vary from run to run - even though nothing today is known
     to rely on such ordering. Re-executing is the only way to actually fix
-    *this* process's own seed, rather than merely a subprocess's.
+    *this* process's own seed, rather than merely a subprocess's. ``LC_ALL``/
+    ``TZ`` don't strictly need the re-exec - nothing stops a plain
+    ``os.environ`` update from taking effect on the current process for
+    those two - but they're bundled into the same fixed re-exec'd
+    environment for the same "nothing today is known to depend on this,
+    fix it anyway" reasoning as the hash seed, and so every subprocess this
+    process itself goes on to spawn inherits all three consistently instead
+    of two being set here and the third being set separately downstream.
 
     Gated behind ``reproducible`` so a plain build's behavior and process
     identity are unchanged - this only kicks in once the build has already

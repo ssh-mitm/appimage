@@ -120,7 +120,12 @@ def build(config: BuildConfig, project_root: Path) -> None:
         # LC_ALL=C so mksquashfs's own C-library string handling (and
         # appimagetool's glib argument parsing) can't vary with the build
         # host's locale - no PYTHONHASHSEED here, appimagetool/mksquashfs
-        # are native binaries, not Python.
+        # are native binaries, not Python. TZ=UTC for the same reason as
+        # _isolated_subprocess_env: SOURCE_DATE_EPOCH itself is timezone-
+        # independent, but nothing rules out some code path in appimagetool
+        # or mksquashfs formatting the current wall-clock time rather than
+        # just clamping to the epoch - pinning the timezone here too closes
+        # that off rather than trusting it doesn't happen.
         subprocess.run(  # noqa: S603  # nosec B603
             cmd,
             cwd=dist_dir,
@@ -128,6 +133,7 @@ def build(config: BuildConfig, project_root: Path) -> None:
                 **os.environ,
                 "SOURCE_DATE_EPOCH": str(epoch),
                 "LC_ALL": "C",
+                "TZ": "UTC",
             },
             check=True,
         )

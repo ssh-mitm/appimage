@@ -341,15 +341,25 @@ def _isolated_subprocess_env() -> dict[str, str]:
       omitted it from the AppDir entirely, in a project that has it as a
       real, needed dependency.
 
-    Also pins ``PYTHONHASHSEED``/``LC_ALL`` so pip's and the build
+    Also pins ``PYTHONHASHSEED``/``LC_ALL``/``TZ`` so pip's and the build
     backend's own behavior can't vary with the build host's hash
-    randomization seed or locale, the same reasoning as
+    randomization seed, locale, or timezone, the same reasoning as
     ``_ensure_reproducible_process_env`` in ``__main__.py`` for this
-    project's own process.
+    project's own process. ``TZ=UTC`` matters here specifically because
+    this environment also reaches arbitrary third-party code this project
+    doesn't control - a build backend's ``setup.py``, a dependency's own
+    build-time code generation, a ``post_install``/``pre_package`` hook -
+    any of which could format the current wall-clock time (e.g.
+    ``datetime.now()``, a shelled-out ``date``) into something that ends
+    up installed. Unlike ``SOURCE_DATE_EPOCH``, nothing here can force such
+    code to use a *fixed* instant instead of the real one, but pinning the
+    timezone at least makes that formatted string the same across build
+    hosts in different timezones at the same moment, rather than adding a
+    second, independent source of cross-machine variance on top.
 
     Every subprocess that runs the bundled interpreter for an install -
     ``pip install`` or ``pip lock`` alike - gets this environment so none
-    of them can reintroduce either leak.
+    of them can reintroduce any of these leaks.
     """
     return {
         **os.environ,
@@ -357,6 +367,7 @@ def _isolated_subprocess_env() -> dict[str, str]:
         "PYTHONNOUSERSITE": "1",
         "PYTHONHASHSEED": "0",
         "LC_ALL": "C",
+        "TZ": "UTC",
     }
 
 

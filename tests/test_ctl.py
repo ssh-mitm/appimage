@@ -1523,6 +1523,7 @@ def test_isolated_subprocess_env_disables_user_site_and_bytecode() -> None:
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert env["PYTHONHASHSEED"] == "0"
     assert env["LC_ALL"] == "C"
+    assert env["TZ"] == "UTC"
 
 
 def test_install_targets_disables_user_site(tmp_path: Path) -> None:
@@ -1732,6 +1733,7 @@ def test_build_pins_locale_for_appimagetool(tmp_path: Path) -> None:
 
     packaging_call = next(c for c in manager.mock_calls if c[0] == "subprocess_run")
     assert packaging_call.kwargs["env"]["LC_ALL"] == "C"
+    assert packaging_call.kwargs["env"]["TZ"] == "UTC"
 
 
 def test_build_strips_xattrs_when_packaging(tmp_path: Path) -> None:
@@ -3113,7 +3115,10 @@ def test_ensure_reproducible_process_env_noop_when_already_set() -> None:
     config = BuildConfig(reproducible=True)
 
     with patch("appimage.ctl.__main__.os.execve") as mock_execve, \
-         patch.dict("os.environ", {"PYTHONHASHSEED": "0", "LC_ALL": "C"}):
+         patch.dict(
+             "os.environ",
+             {"PYTHONHASHSEED": "0", "LC_ALL": "C", "TZ": "UTC"},
+         ):
         _ensure_reproducible_process_env(config)
 
     mock_execve.assert_not_called()
@@ -3133,3 +3138,4 @@ def test_ensure_reproducible_process_env_reexecs_when_reproducible_and_unset() -
     exec_env = args[2]
     assert exec_env["PYTHONHASHSEED"] == "0"
     assert exec_env["LC_ALL"] == "C"
+    assert exec_env["TZ"] == "UTC"
