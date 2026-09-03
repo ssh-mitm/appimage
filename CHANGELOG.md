@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-09-03
+
 ### Fixed
 
 - `verify-appimage-reproducible-build.sh` now builds the bundled `appimage` runtime module from the local checkout instead of resolving it from PyPI, so it tests the current code instead of failing on unreleased versions
@@ -198,7 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release on pypi.org
 
-[Unreleased]: https://github.com/ssh-mitm/appimage/compare/4.0.0...main
+[Unreleased]: https://github.com/ssh-mitm/appimage/compare/4.0.1...main
+[4.0.1]: https://github.com/ssh-mitm/appimage/compare/4.0.0...4.0.1
 [4.0.0]: https://github.com/ssh-mitm/appimage/compare/3.0.1...4.0.0
 [3.0.1]: https://github.com/ssh-mitm/appimage/compare/3.0.0...3.0.1
 [3.0.0]: https://github.com/ssh-mitm/appimage/compare/2.0.1...3.0.0
