@@ -95,6 +95,8 @@ def _resolve_python_url(
     _log.info("Resolving Python %s download URL...", python)
 
     release = _github_api_get(api_url)
+    # Both api_url forms above are single-release endpoints, never a list.
+    assert isinstance(release, dict)  # noqa: S101  # nosec B101
 
     resolved_date = str(release.get("tag_name", date or "latest"))
     assets: list[dict[str, object]] = release.get("assets", [])  # type: ignore[assignment]
