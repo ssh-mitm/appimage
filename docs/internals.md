@@ -165,6 +165,13 @@ module into the bundled site-packages. This keeps everything self-contained insi
 build/AppDir/python/bin/python3 -m pip install --no-compile appimage myapp
 ```
 
+Replace `myapp` with `.` (the current directory) instead if you're packaging a local
+project that isn't published to PyPI - which is the common case while developing:
+
+```bash
+build/AppDir/python/bin/python3 -m pip install --no-compile appimage .
+```
+
 The `appimage` package is the runtime component that handles entry point dispatch,
 `--python-interpreter`, and virtual environment support at launch time.
 
@@ -178,6 +185,7 @@ hash of its source instead:
 ```bash
 build/AppDir/python/bin/python3 -m compileall -qf \
   --invalidation-mode unchecked-hash \
+  -s build/AppDir/python/lib/python3.x/site-packages \
   build/AppDir/python/lib/python3.x/site-packages
 ```
 
@@ -186,6 +194,15 @@ can leave behind a `.pyc` already timestamp-invalidated by an earlier build step
 build backend, a lifecycle hook). Without `-f`, `compileall` leaves an
 existing-looking `.pyc` alone instead of regenerating it in hash-based mode,
 reintroducing the same non-determinism through a side door.
+
+`-s <site-packages>` strips that path prefix from every compiled code object's
+`co_filename`. Without it, each `.pyc` embeds the *absolute* build path (e.g.
+`/home/alice/project/build/AppDir/python/lib/python3.11/site-packages/...`) - baking
+the building machine's directory layout, and typically the building user's own name,
+into every single compiled file. Confirmed by hand: packaging the identical AppDir
+from two different absolute locations, with every other reproducibility measure on
+this page already applied, still produced two different `.AppImage` files until this
+flag was added - `co_filename` was the only thing left that varied.
 
 ### Step 5 - Write the AppRun script
 
@@ -197,6 +214,7 @@ Create a file named `AppRun` with the following content:
 ```bash
 #!/bin/bash
 set -e
+
 
 if [ -n "$APPIMAGE" ]; then
     appimage_path=$(dirname "$APPIMAGE")
@@ -213,7 +231,11 @@ exec "$APPDIR/python/bin/python3" -P -m appimage --python-main myapp "$@"
 ```
 
 Replace `myapp` in `--python-main` with the console script name your package defines in
-`[project.scripts]`.
+`[project.scripts]`. The blank line after `set -e` is deliberate, not a typo - it's
+where `appimage.ctl`'s own template ([`templates/AppRun.sh`](https://github.com/ssh-mitm/appimage/blob/main/appimage/ctl/templates/AppRun.sh))
+substitutes extra `export` lines for `[tool.appimage.env]`, and stays blank (not
+collapsed) when there are none - keep it for a byte-identical match against the
+generated version.
 
 Then copy it into place and mark it executable:
 
@@ -267,11 +289,29 @@ file. PNG and SVG are both accepted.
 cp myapp.png build/AppDir/${APP}.png
 ```
 
-If no icon is available, a placeholder can be created with ImageMagick:
+If no icon is available, `appimage.ctl` falls back to a bundled default - already sitting
+inside `AppDir` after Step 4, no extra download needed:
 
 ```bash
-convert -size 256x256 xc:gray build/AppDir/${APP}.png
+cp build/AppDir/python/lib/python3.x/site-packages/appimage/assets/default_icon.svg \
+  build/AppDir/${APP}.svg
 ```
+
+(Update the `.desktop` file's `Icon=` line to match if you use the `.svg` extension.)
+
+Alternatively, a plain placeholder can be created with ImageMagick (`convert` is
+deprecated as of ImageMagick 7 - use `magick`):
+
+```bash
+magick -size 256x256 xc:gray -strip build/AppDir/${APP}.png
+```
+
+`-strip` matters for reproducibility: without it, ImageMagick embeds a `png:tIME` chunk
+- the real wall-clock moment the file was generated - into the PNG's own bytes.
+Normalizing the file's *mtime* later (see below) doesn't touch that; two placeholder
+icons generated at different times are otherwise different files even though they're
+visually identical gray squares. Confirmed by hand: this alone was enough to make an
+otherwise byte-identical AppDir differ.
 
 ### Step 8 - Download appimagetool and the runtime stub
 
@@ -315,17 +355,166 @@ automatically from whatever's currently resolved) to pin and verify them; withou
 pin, `appimage.ctl` still logs the sha256 of whichever binaries it used, so they can
 be copied into config later.
 
-### Step 9 - Pack the AppImage
+### Step 9 - Scrub build-machine paths and normalize the AppDir
+
+Everything up to this point produces a *working* AppImage - run it, it works. It does
+not yet produce a *reproducible* one: `pip install` and mksquashfs both bake incidental,
+per-build-machine state into the result, invisibly, even though nothing about the
+installed content actually changed.
+
+**Console-script shebangs.** `pip install .` generates a launcher script for every
+`[project.scripts]` entry point (`build/AppDir/python/bin/myapp` here), and its shebang
+line embeds the *absolute* path to the bundled interpreter - `build/AppDir/python/bin/
+python3`, resolved to a full path at install time. That path varies with wherever the
+checkout happens to live, so two otherwise-identical builds from two different
+locations (two developers, two CI runners) embed two different shebangs. Rewrite each
+one to find its interpreter relative to its own location instead:
+
+```bash
+build/AppDir/python/bin/python3 - <<'PYEOF'
+import pathlib
+
+bindir = pathlib.Path("build/AppDir/python/bin")
+appdir_bytes = str(bindir.parent.parent.resolve()).encode()
+for script in bindir.iterdir():
+    if script.is_symlink() or not script.is_file():
+        continue
+    content = script.read_bytes()
+    if not content.startswith(b"#!" + appdir_bytes):
+        continue
+    first_line, _, rest = content.partition(b"\n")
+    python_bin_name = first_line[2:].rsplit(b"/", 1)[-1]
+    replacement = b'"$(dirname -- "$(realpath -- "$0")")/' + python_bin_name + b'"'
+    new_content = (
+        b"#!/bin/sh\n'''exec' " + replacement + b' "$0" "$@"\n' + b"' '''\n" + rest
+    )
+    script.write_bytes(new_content)
+PYEOF
+```
+
+pip's own RECORD file for that package (`.../myapp-0.1.0.dist-info/RECORD`) still lists
+the *original* shebang's hash and size for that script - stale the moment the script
+above rewrites it. Nothing at runtime reads RECORD, but leaving it stale means the
+RECORD file's own bytes still vary with the original, path-dependent shebang, defeating
+the whole point. `appimage.ctl` updates the affected row in place; doing the same by
+hand for a small project is usually simplest with a short script - see
+[`_scrub_record_row`](https://github.com/ssh-mitm/appimage/blob/main/appimage/ctl/build_appdir.py)
+for the exact logic if you want to replicate it faithfully.
+
+**`direct_url.json`.** Every local install writes one per package (PEP 610), recording
+the `file://` source path it was installed from. Meaningless once the AppDir runs
+somewhere else, and - for a package installed from a *local* path - it embeds that
+path too:
+
+```bash
+find build/AppDir -name direct_url.json -delete
+```
+
+(If you deleted it, also drop its row from the corresponding RECORD, for the same
+reason as the shebang above.)
+
+**File timestamps.** Every file `pip`, `compileall`, and the steps above touched now has
+whatever mtime it happened to be installed, compiled, or rewritten at - which differs
+build to build even when the content doesn't. `mksquashfs` embeds each file's mtime
+into the packed image, so this alone is enough to make two builds differ:
+
+```bash
+find build/AppDir -exec touch -h -d @0 {} +
+```
+
+`-h` matters - it changes the symlink's own timestamp instead of following it (some
+Python installations include symlinks, e.g. `python3 -> python3.11`).
+
+**File permissions.** `mksquashfs` also embeds each file's permission bits. Depending on
+how a given build host's umask interacted with the permissions already stored in an
+installed package's own files, two content-identical AppDirs have been observed to
+differ only in whether files ended up group/other-writable:
+
+```bash
+find build/AppDir -not -type l -exec chmod go-w {} +
+```
+
+### Step 10 - Pack the AppImage
 
 ```bash
 mkdir -p dist
-build/appimagetool --runtime-file build/runtime build/AppDir dist/${APP}-${ARCH}.AppImage
+SOURCE_DATE_EPOCH=0 LC_ALL=C TZ=UTC build/appimagetool --runtime-file build/runtime \
+  --mksquashfs-opt -no-xattrs \
+  --mksquashfs-opt -no-duplicates \
+  --mksquashfs-opt -processors --mksquashfs-opt 1 \
+  build/AppDir dist/${APP}-${ARCH}.AppImage
 ```
+
+If `update_info` is set in `[tool.appimage]`, add `-u "<update_info>"` before the
+`AppDir`/output arguments too - it's not just cosmetic. `appimagetool` embeds that
+string into a resource section of the runtime ELF itself, so a build run with `-u` and
+one run without it produce two different files even from an *identical* AppDir with
+every other flag the same. Confirmed by hand: this exact, previously-unexplained
+mismatch is what earlier made a hand-packaged AppImage differ from `appimage.ctl`'s own
+output for a project that has `update_info` configured, despite every file inside the
+AppDir already matching byte-for-byte.
 
 `appimagetool` compresses the AppDir into a SquashFS image, prepends the AppImage
 runtime (a small ELF binary that mounts and executes it - `--runtime-file` supplies the
 copy from Step 8 instead of triggering another live download), and writes the result as
 a single executable file.
+
+The three `--mksquashfs-opt` flags and the environment matter as much as everything in
+Step 9 - see ["Why this is hard"](reproducible-builds.md#why-this-is-hard) for the full
+reasoning behind each:
+
+- `-no-xattrs` - without it, a build host's own filesystem xattrs (e.g. SELinux labels)
+  leak into the image.
+- `-no-duplicates` - mksquashfs's duplicate-file pre-filter otherwise makes the packaged
+  bytes sensitive to incidental per-build state, even from an unchanged AppDir.
+- `-processors 1` - confirmed by hand: with the compression thread count left to
+  auto-detect, otherwise-identical AppDirs produced different bytes depending on how the
+  parallel deflator threads happened to finish and get written out - not on content,
+  directory order, or machine, but on scheduling. Slower, but the only way to remove
+  that variable entirely.
+- `SOURCE_DATE_EPOCH`/`LC_ALL`/`TZ` in appimagetool's own environment - it touches a few
+  paths of its own during packaging (e.g. `.DirIcon`) that Step 9's AppDir-side
+  normalization can't reach.
+
+### Verify it yourself, without `appimage.ctl`
+
+Every step above was run by hand, twice, from two *different* absolute output
+directories (`/tmp/manual-build-a`, `/tmp/manual-build-b` - deliberately not the same
+location twice, the stronger version of the check: it also catches anything that
+depends on the build's own path, not just on run-to-run timing):
+
+```
+$ ./manual-build.sh /tmp/manual-build-a
+[...]
+54dde6716cbe1da104a2b73b4f1a67d356f56a677da51e408b877e1b900a4326  /tmp/manual-build-a/dist/myapp-x86_64.AppImage
+$ ./manual-build.sh /tmp/manual-build-b
+[...]
+54dde6716cbe1da104a2b73b4f1a67d356f56a677da51e408b877e1b900a4326  /tmp/manual-build-b/dist/myapp-x86_64.AppImage
+```
+
+Identical to each other - and, checked directly against a same-configuration build run
+through the real `python -m appimage.ctl` on the same machine, identical to *that* too:
+`54dde6716cbe1da104a2b73b4f1a67d356f56a677da51e408b877e1b900a4326`, same hash, byte for
+byte. Not merely "this recipe is internally consistent" but "this recipe *is* what
+`appimage.ctl` does" - the strongest version of the claim on this page.
+
+Before that match, both this and the cross-machine case below went through several
+rounds of a real mismatch, each one a genuine gap in this page rather than a fluke -
+confirmed by hand, in this order: missing `-s` on `compileall`, a stale RECORD row
+after relocating the shebang, ImageMagick's `png:tIME` chunk, an icon file that existed
+but wasn't the same file `appimage.ctl` itself falls back to, and (for a project with
+`update_info` configured - not `myapp`, see [ssh-mitm](https://github.com/ssh-mitm/ssh-mitm)
+below) a missing `-u` flag. `manual-build.sh` is
+[`examples/myapp/manual-build.sh`](https://github.com/ssh-mitm/appimage/blob/main/examples/myapp/manual-build.sh)
+in this repository - a runnable version of every step on this page, for anyone who
+wants to check the current claim rather than trust this paragraph.
+
+The same recipe, adapted for a real project's own config (production extras,
+`pylock.toml`-pinned dependencies, its own icon/desktop, `update_info`) was checked
+against [`ssh-mitm`](https://github.com/ssh-mitm/ssh-mitm) - a much larger, real
+application, not a toy example - with the same result: the fully manual build matches
+`python -m appimage.ctl`'s own output byte for byte
+(`62066b4cb7cf61004d714b905ed15a0a7e42819256869a091baf7d9b6a40ea85`).
 
 ## What `appimage.ctl` automates
 

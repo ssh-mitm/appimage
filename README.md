@@ -53,15 +53,13 @@ python -m appimage.ctl init
 
 Covers bytecode compilation, file timestamps, and the `appimagetool` binary itself - `appimage` defaults to the [maintained successor](https://github.com/AppImage/appimagetool) of the classic tool, whose bundled `mksquashfs` has a [documented non-deterministic compression bug](https://github.com/AppImage/AppImageKit/issues/929).
 
-To guarantee this across machines and over time too, with every dependency hash-verified:
+To guarantee this across machines and over time too, with every dependency hash-verified, four steps: pin the toolchain, hash-pin every dependency, build once to prove the pins actually work together, then turn `reproducible = true` on - only once that build succeeds.
 
 ```sh
-python -m appimage.ctl enable-reproducible   # pin the toolchain, hash-pin every
-                                              # dependency, verify with a real build,
-                                              # then turn reproducible = true on
+python -m appimage.ctl enable-reproducible   # all four steps, automated
 ```
 
-See [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for what's automatic, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `lock`.
+Or run them yourself for more control - `init`, `lock`, `build --reproducible` - see [Reproducible builds](https://appimage.readthedocs.io/en/latest/reproducible-builds.html) for the piecewise form, how to pin appimagetool/Python for cross-machine guarantees, and how to hash-verify third-party dependencies with `lock`.
 
 
 ## Bundled interpreter access
