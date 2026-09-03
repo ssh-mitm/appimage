@@ -116,7 +116,12 @@ even with everything else already correct:
    of input normalization fixes this; it's a bug in the tool doing the
    packing. `appimage.ctl` defaults to its maintained successor,
    [`AppImage/appimagetool`](https://github.com/AppImage/appimagetool),
-   which bundles a fixed, modern squashfs-tools.
+   which bundles a fixed, modern squashfs-tools. If you ever build
+   `appimagetool` yourself instead of using the pinned download, use
+   squashfs-tools >= 4.5.1 - the version
+   [reproducible-builds.org](https://reproducible-builds.org/docs/system-images/)
+   itself calls out as the first to honor `SOURCE_DATE_EPOCH` and not
+   reorder fragments based on multithreading.
 4. **appimagetool's own side effects.** Packaging touches a few paths of
    its own (e.g. `.DirIcon`) that live outside the AppDir tree
    `appimage.ctl` controls. `SOURCE_DATE_EPOCH` is passed into

@@ -88,6 +88,18 @@ def build(config: BuildConfig, project_root: Path) -> None:
         # (duplicate files are stored once each, not deduplicated) for
         # actually holding the "identical input produces identical output"
         # guarantee this project makes.
+        #
+        # -processors 1 pins mksquashfs's own compression thread count.
+        # Confirmed by hand: with the thread count left to auto-detect
+        # (mksquashfs's default), otherwise-identical AppDirs packaged the
+        # same way produced different bytes depending on how mksquashfs
+        # was invoked - not on file content, order (checked with disorderfs
+        # forcing genuinely randomized directory order: no effect once
+        # processors is pinned), or machine, but on something schedule-
+        # dependent in how the parallel deflator threads finish and get
+        # written out. Single-threaded compression removes that variable
+        # entirely, at a real cost: packaging takes longer, proportional to
+        # AppDir size.
         cmd = [
             str(appimagetool_bin),
             "--runtime-file",
@@ -96,6 +108,10 @@ def build(config: BuildConfig, project_root: Path) -> None:
             "-no-xattrs",
             "--mksquashfs-opt",
             "-no-duplicates",
+            "--mksquashfs-opt",
+            "-processors",
+            "--mksquashfs-opt",
+            "1",
         ]
         if resolved.update_info:
             cmd += ["-u", resolved.update_info]
