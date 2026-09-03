@@ -589,6 +589,17 @@ needs) before generating, but a build against an existing `pylock.toml`
 with an older bundled pip will fail with a plain pip error rather than
 this tool's own message.
 
+A package pinned in `pylock.toml` with no prebuilt wheel - only an
+`sdist` - is built from source at install time, inside pip's own
+randomly-named isolated build directory. If that package compiles a
+native extension, the result can embed that random temp path in its
+debug info - a different path from the AppDir this project scrubs (see
+["The build machine's own absolute path"
+above](#why-this-is-hard)), so that scrubbing has no way to catch it.
+`lock` and every later `check`/`build` warn when this is the case,
+naming the package - harmless if it's pure Python, worth a second look
+if it isn't.
+
 ## Verified build backend
 
 `pylock` hash-pins the packaged project's *third-party* dependencies -

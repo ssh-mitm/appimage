@@ -9,7 +9,7 @@ import tomllib
 from pathlib import Path
 from typing import Final
 
-from appimage.ctl._base import BuildConfig, _ResolvedBuild
+from appimage.ctl._base import BuildConfig, _ResolvedBuild, _sdist_only_packages
 from appimage.ctl._python import _install_python, _pip_version
 from appimage.ctl._toml import _toml_value
 from appimage.ctl.build_appdir import _isolated_subprocess_env, _resolve_for_appdir
@@ -66,6 +66,25 @@ def _run_pip_lock(
     _log.info("Done: %s", output_path)
 
 
+def _warn_sdist_only(pylock_path: Path, config_key: str) -> None:
+    """Log a warning if *pylock_path* pins any package with no prebuilt wheel.
+
+    Surfaced right here, at generation time, in addition to
+    ``_resolve()``'s own check on every later ``check()``/``build()`` - see
+    ``_sdist_only_packages`` for why this matters.
+    """
+    sdist_only = _sdist_only_packages(pylock_path)
+    if sdist_only:
+        _log.warning(
+            "%s pins packages with no prebuilt wheel - built from source "
+            "at install time (sdist only): %s. See docs/reproducible-"
+            "builds.md's pylock 'Known limits' section for why this can be "
+            "a reproducibility risk.",
+            config_key,
+            ", ".join(sdist_only),
+        )
+
+
 _PYLOCK_PACKAGE_BLOCK: Final = re.compile(r"(?=^\[\[packages\]\]$)", re.MULTILINE)
 
 
@@ -119,6 +138,7 @@ def _generate_lock(
         uploaded_prior_to=uploaded_prior_to,
     )
     _strip_local_directory_entries(pylock_path)
+    _warn_sdist_only(pylock_path, "pylock")
     return pylock_path
 
 
@@ -154,6 +174,7 @@ def _generate_build_pylock(
         build_pylock_path,
         uploaded_prior_to=uploaded_prior_to,
     )
+    _warn_sdist_only(build_pylock_path, "build_pylock")
     return build_pylock_path
 
 

@@ -2215,6 +2215,69 @@ def test_pylock_noop_when_configured(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# sdist-only packages (no prebuilt wheel) in pylock/build_pylock
+# ---------------------------------------------------------------------------
+
+_SAMPLE_PYLOCK_WITH_SDIST_ONLY = f'''\
+lock-version = "1.0"
+created-by = "pip"
+
+[[packages]]
+name = "setuptools"
+version = "84.0.0"
+
+[[packages.wheels]]
+name = "setuptools-84.0.0-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/setuptools.whl"
+
+[packages.wheels.hashes]
+sha256 = "{"c" * 64}"
+
+[[packages]]
+name = "somecextension"
+version = "1.2.3"
+
+[packages.sdist]
+name = "somecextension-1.2.3.tar.gz"
+url = "https://files.pythonhosted.org/packages/somecextension.tar.gz"
+
+[packages.sdist.hashes]
+sha256 = "{"d" * 64}"
+'''
+
+
+def _has_sdist_only_message(messages: list[str]) -> bool:
+    return any("sdist only" in m for m in messages)
+
+
+def test_sdist_only_packages_finds_sdist_without_wheel(tmp_path: Path) -> None:
+    from appimage.ctl._base import _sdist_only_packages
+
+    pylock_path = tmp_path / "pylock.toml"
+    pylock_path.write_text(_SAMPLE_PYLOCK_WITH_SDIST_ONLY)
+
+    assert _sdist_only_packages(pylock_path) == ["somecextension==1.2.3"]
+
+
+def test_sdist_only_packages_empty_when_file_missing(tmp_path: Path) -> None:
+    from appimage.ctl._base import _sdist_only_packages
+
+    assert _sdist_only_packages(tmp_path / "pylock.toml") == []
+
+
+def test_pylock_warns_on_sdist_only_package(tmp_path: Path) -> None:
+    _write_minimal_project(tmp_path)
+    (tmp_path / "pylock.toml").write_text(_SAMPLE_PYLOCK_WITH_SDIST_ONLY)
+    config = BuildConfig(pylock="pylock.toml")
+
+    resolved = _resolve(config, tmp_path)
+
+    assert resolved.appdir_errors == []
+    assert _has_sdist_only_message(resolved.appdir_warnings)
+    assert any("somecextension==1.2.3" in m for m in resolved.appdir_warnings)
+
+
+# ---------------------------------------------------------------------------
 # build_pylock (build-backend hash-pinning)
 # ---------------------------------------------------------------------------
 

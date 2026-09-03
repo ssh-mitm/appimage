@@ -645,6 +645,58 @@ def _resolve_desktop_path(
     return None, "will be generated", [warning]
 
 
+def _sdist_only_packages(pylock_path: Path) -> list[str]:
+    """Return "name==version" for every pylock package with no wheel, only an sdist.
+
+    Installing such a package triggers a PEP 517 build from source, inside
+    pip's own randomly-named isolated build directory - a *different* path
+    from the AppDir this project controls and scrubs (see
+    ``_scrub_build_paths`` in ``build_appdir.py``). A native extension built
+    that way can embed that random temp path in its debug info (DWARF,
+    ``__FILE__`` macros), which the AppDir-path marker sweep has no way to
+    catch, since it only knows to look for the AppDir's own path. A pure-Python
+    sdist is harmless - the risk is specific to packages that compile
+    something - but this can't tell the two apart from the lock file alone,
+    so it flags every sdist-only package and lets the reader judge.
+
+    Silent no-op (returns ``[]``) if *pylock_path* doesn't exist yet, rather
+    than raising - the hard "file must exist" check already lives at actual
+    install time (``_install_from_pylock``); this is only a best-effort
+    warning, called from ``_resolve()``/``check()`` too where the file may
+    not have been generated yet.
+    """
+    if not pylock_path.exists():
+        return []
+    data = tomllib.loads(pylock_path.read_text())
+    packages: list[dict[str, object]] = data.get("packages", [])
+    return [
+        f"{pkg['name']}=={pkg.get('version', '?')}"
+        for pkg in packages
+        if "directory" not in pkg and not pkg.get("wheels") and pkg.get("sdist")
+    ]
+
+
+def _append_sdist_only_warning(
+    warnings: list[str],
+    pylock_path: Path,
+    config_key: str,
+) -> None:
+    """Append a warning to *warnings* if *pylock_path* pins any sdist-only package."""
+    sdist_only = _sdist_only_packages(pylock_path)
+    if not sdist_only:
+        return
+    warnings.append(
+        f"{config_key} pins packages with no prebuilt wheel - built from "
+        f"source at install time (sdist only): {', '.join(sdist_only)}. A "
+        "compiled extension built this way can embed pip's own randomly "
+        "named build directory in its debug info, which the build-path "
+        "scrubbing in build_appdir.py can't catch (it only knows the "
+        "AppDir's own path) - a possible reproducibility gap if any of "
+        "these actually compile something. Harmless for pure-Python "
+        "packages.",
+    )
+
+
 def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
     """Resolve all auto-detected fields into a complete build configuration.
 
@@ -770,6 +822,12 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
             'then set pylock = "pylock.toml" in [tool.appimage].'
         )
         (appdir_errors if config.require_pylock else appdir_warnings).append(pylock_msg)
+    else:
+        _append_sdist_only_warning(
+            appdir_warnings,
+            project_root / config.pylock,
+            "pylock",
+        )
 
     if not config.build_pylock:
         build_pylock_msg = (
@@ -780,6 +838,12 @@ def _resolve(config: BuildConfig, project_root: Path) -> _ResolvedBuild:
         )
         (appdir_errors if config.require_build_pylock else appdir_warnings).append(
             build_pylock_msg,
+        )
+    else:
+        _append_sdist_only_warning(
+            appdir_warnings,
+            project_root / config.build_pylock,
+            "build_pylock",
         )
 
     return _ResolvedBuild(
