@@ -6,7 +6,7 @@ nothing pinned - produce a **byte-for-byte identical** `.AppImage` file:
 ```bash
 $ sha256sum dist/myapp-x86_64.AppImage
 db8b648c9ddcc50773b740219d3ecb4910b6bf3b18907b566f2eb1b624a79e35  dist/myapp-x86_64.AppImage
-$ rm -rf build dist && python -m appimage.ctl
+$ rm -rf build dist && python -m appimage.ctl build
 $ sha256sum dist/myapp-x86_64.AppImage
 db8b648c9ddcc50773b740219d3ecb4910b6bf3b18907b566f2eb1b624a79e35  dist/myapp-x86_64.AppImage
 ```
@@ -23,35 +23,46 @@ closing a different gap, each independent of the other: pinning the
 toolchain and hash-pinning every dependency, and turning on the umbrella
 flag that makes a missing pin a hard build failure instead of a warning.
 
-### The one-command path
+### The recipe
+
+Four steps, the same ones every time, regardless of which form below you use:
+
+1. Pin the toolchain - `python_date`, `appimagetool_sha256`, `runtime_sha256`.
+2. Hash-pin every dependency - `pylock.toml`, plus a lock file for the build backend.
+3. Build once, for real, with those pins enforced - proving they actually work together, not just that they resolve.
+4. Only once that build succeeds, turn `reproducible = true` on.
+
+Automated, as one command:
 
 ```bash
 python -m appimage.ctl enable-reproducible
 ```
 
-Pins the toolchain (`python_date`, `appimagetool_sha256`, `runtime_sha256`
-- same as `init`), generates both `pylock.toml` and the build-backend lock
-file (same as `lock`), then runs a real build against those pins to prove
-they actually work together - and only once that build succeeds, writes
-`reproducible = true` to `pyproject.toml`. Never flips the flag as a side
-effect of merely resolving or locking values - see [The umbrella
-flag](#the-umbrella-flag) for why that distinction matters.
+`enable-reproducible` runs exactly those four steps - step 1 is `init`,
+step 2 is `lock`, step 3 is a real build with `reproducible` enforced,
+and step 4 only happens if step 3 didn't raise. It's not a separate
+mechanism from what's below, just the same recipe with nothing to run by
+hand.
 
-### Piecewise, if you want more control
+Or run each step yourself, for more control - to inspect what changed
+between steps, adopt only some of them, or re-pin just one later without
+repeating the rest:
 
 ```bash
 python -m appimage.ctl init
 python -m appimage.ctl lock
+python -m appimage.ctl build --reproducible
 ```
 
-`init` writes `python_date`, `appimagetool_sha256`, and `runtime_sha256`
-to `pyproject.toml`; `lock` generates both `pylock.toml` (runtime
-dependencies) and a build-backend lock file against the now-pinned
-interpreter. Each command re-reads `pyproject.toml` from disk when it
-starts, so `lock` picks up whatever `init` just wrote even run as a
-separate invocation afterwards. Either can also be run on its own later,
-e.g. to re-pin just one after a dependency bump. Details: [Pinning for
-cross-machine reproducibility](#pinning-for-cross-machine-reproducibility),
+Each command re-reads `pyproject.toml` from disk when it starts, so
+`lock` picks up whatever `init` just wrote even run as a separate
+invocation afterwards, and `build --reproducible` picks up both. Once
+that build succeeds, set `reproducible = true` in `pyproject.toml`
+yourself - `enable-reproducible` does the identical thing automatically,
+see [The umbrella flag](#the-umbrella-flag) for why it waits for a
+successful build first rather than writing the flag right away. Details:
+[Pinning for cross-machine
+reproducibility](#pinning-for-cross-machine-reproducibility),
 [Verified dependencies](#verified-dependencies).
 
 ### The umbrella flag
@@ -261,10 +272,10 @@ without a bundled `zsyncmake`, explicitly configured via `appimagetool` in
 ## Verify it yourself
 
 ```bash
-python -m appimage.ctl
+python -m appimage.ctl build
 mv dist/myapp-x86_64.AppImage /tmp/build-a.AppImage
 rm -rf build dist
-python -m appimage.ctl
+python -m appimage.ctl build
 sha256sum /tmp/build-a.AppImage dist/myapp-x86_64.AppImage
 ```
 
@@ -308,7 +319,7 @@ unverified resolution a hard error instead of a warning, for release
 builds where "give me the exact bits I asked for, or fail" matters more
 than convenience.
 
-Run `python -m appimage.ctl --reproducible` (after `init` has written
+Run `python -m appimage.ctl build --reproducible` (after `init` has written
 the pins) as a shortcut that enforces all of the above at once: it implies
 `verify_downloads` and `require_zsyncmake` (see
 [configuration.md](configuration.md)), and refuses to build at all if
@@ -480,7 +491,7 @@ pylock = "pylock.toml"
 
 ```sh
 python -m appimage.ctl lock              # generate/refresh pylock.toml
-python -m appimage.ctl --require-pylock  # abort if pylock isn't set
+python -m appimage.ctl build --require-pylock  # abort if pylock isn't set
 ```
 
 ### `lock` is a thin wrapper, not a new mechanism
@@ -660,6 +671,34 @@ backend and how it's pinned (a bounded range rather than an exact pin,
 for reasons specific to that backend, and pinned via a separate,
 hand-generated `requirements-build.txt` for *this project's own* PyPI
 wheel - a different, unrelated mechanism from `build_pylock` above).
+
+## Hooks, extra files, and a custom AppRun are outside this guarantee
+
+Everything on this page so far is something `appimage.ctl` fully controls and can make
+deterministic on your behalf. Four config keys hand control to something it can't:
+`[tool.appimage.hooks]`'s `post_install`/`pre_package` (arbitrary shell scripts),
+`[tool.appimage.extra_files]` (arbitrary files copied in as-is), `apprun` (a fully
+custom AppRun, copied in place of the generated one), and `python_dir` (see
+["Bundling an already-extracted Python"](#bundling-an-already-extracted-python) above -
+a pre-extracted interpreter, used exactly as given).
+
+None of these are hash-verified or checked for determinism - there's nothing to check
+against. A `post_install` hook that writes the current wall-clock time into a generated
+file, an `extra_files` entry whose source is itself regenerated fresh on every checkout,
+or a hand-written `apprun` that embeds `$(uuidgen)`, all make the final AppImage
+non-reproducible - and `appimage.ctl` has no way to detect or prevent it, for the same
+reason `python_dir` is used "exactly as given, with no verification": the content is
+arbitrary, supplied by the project, and never inspected.
+
+This isn't a gap to close. Hooks and extra files exist precisely so a project can do
+something `appimage.ctl` doesn't know about - there's no way to verify determinism for
+code the tool has never seen. Keeping such a hook deterministic (no wall-clock, no
+randomness, same input always produces the same output) is the project author's own
+responsibility for that one piece, the same discipline any reproducible build needs
+elsewhere. One thing still applies regardless: bytecode compilation (with its `-s`
+path-stripping) runs *after* `pre_package`, so whatever a hook does to an installed
+package's source is still compiled hash-based and path-scrubbed like everything else -
+see ["The build machine's own absolute path"](#why-this-is-hard) (item 6).
 
 ## Not covered here
 
