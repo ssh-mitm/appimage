@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-23
+
 ### Added
 
 - Python 3.15 is now supported
@@ -204,7 +206,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release on pypi.org
 
-[Unreleased]: https://github.com/ssh-mitm/appimage/compare/4.0.1...main
+[Unreleased]: https://github.com/ssh-mitm/appimage/compare/4.1.0...main
+[4.1.0]: https://github.com/ssh-mitm/appimage/compare/4.0.1...4.1.0
 [4.0.1]: https://github.com/ssh-mitm/appimage/compare/4.0.0...4.0.1
 [4.0.0]: https://github.com/ssh-mitm/appimage/compare/3.0.1...4.0.0
 [3.0.1]: https://github.com/ssh-mitm/appimage/compare/3.0.0...3.0.1
