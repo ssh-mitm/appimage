@@ -22,7 +22,7 @@ hatch run lint:check   # pytest + black + bandit + ruff + flake8 + pylint + mypy
 ```
 
 `lint:check` is what CI runs (`hatch run +py=<version> lint:check` across
-the Python 3.11–3.14 matrix) - a change isn't done until this passes.
+the Python 3.11–3.15 matrix) - a change isn't done until this passes.
 
 ## Building an AppImage from source
 

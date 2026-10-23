@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python 3.15 is now supported
+
 ## [4.0.1] - 2026-09-03
 
 ### Fixed
